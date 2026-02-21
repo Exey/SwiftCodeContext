@@ -123,8 +123,8 @@ The generated HTML report includes:
    - File list sorted by lines of code
    - Declaration count and types (classes, structs, enums, protocols, actors)
    - Per-package dependency graph
+   — interactive force-directed graph colored by package
 5. **🔥 Knowledge Hotspots** — most critical files by PageRank
-6. **🗺️ Full Codebase Map** — interactive force-directed graph colored by package
 
 ---
 
