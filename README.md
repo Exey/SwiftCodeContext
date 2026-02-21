@@ -201,25 +201,6 @@ SwiftCodeContext/
 └── Tests/CodeContextTests/
     └── CodeContextTests.swift
 ```
-
----
-
-## 🔑 Kotlin → Swift Migration Notes
-
-| Aspect | Kotlin (Original) | Swift (This) |
-|--------|-------------------|--------------|
-| **Runtime** | JVM + Gradle | Native binary (no runtime) |
-| **Git** | JGit library | Native `git` via `Process` |
-| **Graph** | JGraphT | Custom pure-Swift implementation |
-| **Concurrency** | Kotlin Coroutines | Swift async/await + TaskGroup |
-| **CLI** | Clikt | Apple ArgumentParser |
-| **HTTP** | java.net.http | URLSession |
-| **Cache** | ConcurrentHashMap + locks | Swift Actor |
-| **Serialization** | kotlinx.serialization | Codable |
-| **Server** | Ktor + Netty | (Extensible — add Vapor) |
-| **Binary size** | ~50MB+ JAR | ~2MB native binary |
-| **Startup** | ~1-2s (JVM warmup) | Instant |
-
 ---
 
 ## 🧪 Run Tests
