@@ -2,19 +2,7 @@
 
 **Native macOS CLI tool for Swift codebase intelligence** — find critical files, generate dependency graphs, learning paths, and AI-powered insights.
 
-Built 100% in Swift using Apple-native technologies:
-- **Swift Concurrency** (async/await, TaskGroup) — parallel file parsing
-- **Swift ArgumentParser** — CLI interface
-- **URLSession** — AI API calls (no Alamofire)
-- **Foundation** — file I/O, JSON, regex
-- **Process** — native `git` CLI integration (no JGit)
-- **CryptoKit** — cache key hashing
-
-No third-party dependencies beyond ArgumentParser. No JVM. No Gradle. Pure Apple.
-
-> **Note:** SwiftCodeContext is designed for projects that use **Swift Package Manager** (SPM) for dependency management.
-> Packages are detected from the `Packages/` directory structure (`Packages/<PackageName>/Sources/...`).
-
+Built 100% in Swift using Apple-native technologies
 ---
 
 ## 🚀 Quick Start
