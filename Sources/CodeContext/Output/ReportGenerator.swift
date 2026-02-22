@@ -267,7 +267,6 @@ struct ReportGenerator {
 
             // Compute package line/decl percentages for highlighting
             let totalLinesAll = parsedFiles.reduce(0) { $0 + $1.lineCount }
-            let totalDeclsAll = parsedFiles.flatMap(\.declarations).filter { $0.kind != .extension }.count
             var pkgLines: [String: Int] = [:]
             var pkgDecls: [String: Int] = [:]
             for file in parsedFiles {
@@ -275,19 +274,15 @@ struct ReportGenerator {
                 pkgLines[key, default: 0] += file.lineCount
                 pkgDecls[key, default: 0] += file.declarations.filter { $0.kind != .extension }.count
             }
-            let lineThreshold = Double(totalLinesAll) * 0.03
-            let declThreshold = Double(totalDeclsAll) * 0.05
+            let lineThreshold = Double(totalLinesAll) * 0.02
 
             // 1. Local Packages — column grid with clickable links to package sections
             if let localNames = classifiedImports[.local], !localNames.isEmpty {
-                // Build list: App first (always highlighted), then sorted alphabetically
                 let allNames = localNames.sorted()
-                // Add "App" at the beginning if it's not already in local imports
                 let hasApp = pkgLines["App", default: 0] > 0
 
                 var tags: [String] = []
 
-                // App module first if it exists
                 if hasApp {
                     let appLines = pkgLines["App", default: 0]
                     let appTag = "<a href='#pkg-App' class='tag tag-local pkg-link pkg-major'><span class='pkg-name'>📱 App</span><span class='bs-badge-right'>\(appLines.formatted()) loc</span></a>"
@@ -298,7 +293,9 @@ struct ReportGenerator {
                     let bs = packageBuildSystem[name]
                     let bsLabel = bs != nil && bs != .unknown ? "<span class='bs-badge-right'>\(bs!.rawValue)</span>" : ""
                     let anchor = name.replacingOccurrences(of: " ", with: "-")
-                    let isMajor = Double(pkgLines[name, default: 0]) >= lineThreshold || Double(pkgDecls[name, default: 0]) >= declThreshold
+                    let lines = pkgLines[name, default: 0]
+                    let decls = pkgDecls[name, default: 0]
+                    let isMajor = Double(lines) >= lineThreshold && lines >= 10_000 && decls >= 80
                     let majorClass = isMajor ? " pkg-major" : ""
                     tags.append("<a href='#pkg-\(anchor)' class='tag tag-local pkg-link\(majorClass)'><span class='pkg-name'>\(name)</span>\(bsLabel)</a>")
                 }
@@ -469,8 +466,8 @@ struct ReportGenerator {
         <head>
             <meta charset="UTF-8">
             <meta name="viewport" content="width=device-width, initial-scale=1.0">
-            <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🔍</text></svg>">
-            <title>🔍 SwiftCodeContext — \(esc(projectName))</title>
+            <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📊</text></svg>">
+            <title>📊 SwiftCodeContext — \(esc(projectName))</title>
             <style>
                 :root { --bg: #f5f5f7; --card: #fff; --border: #e5e5ea; --text: #1d1d1f; --text2: #424245; --text3: #86868b; --accent: #0071e3; --red: #ff3b30; }
                 * { box-sizing: border-box; }
@@ -525,7 +522,7 @@ struct ReportGenerator {
         <body>
         <div class="container">
             <div class="card">
-                <h1>🔍 SwiftCodeContext Report — \(esc(projectName.isEmpty ? "Project" : projectName))</h1>
+                <h1>📊 SwiftCodeContext Report — \(esc(projectName.isEmpty ? "Project" : projectName))</h1>
                 <p class="subtitle">Generated \(Date().formatted()) · <span class="branch-badge">\(esc(branchName))</span> branch</p>
                 <div class="summary-grid">
                     \(!metadata.swiftVersion.isEmpty ? "<div class=\"summary-card\"><div class=\"num\" style=\"font-size:20px\">Swift \(esc(metadata.swiftVersion))</div><div class=\"label\">Language</div></div>" : "")
