@@ -8,7 +8,7 @@ struct CodeContextConfig: Codable {
         ".git", ".build", ".swiftpm", "DerivedData", "Pods",
         "Carthage", "node_modules", ".xcode", "build", ".idea"
     ]
-    var maxFilesAnalyze: Int = 5000
+    var maxFilesAnalyze: Int = 10000
     var gitCommitLimit: Int = 1000
     var enableCache: Bool = true
     var enableParallel: Bool = true

@@ -3,6 +3,18 @@
 **Native macOS CLI tool for Swift codebase intelligence** — find critical files, generate dependency graphs, learning paths, and AI-powered insights.
 
 Built 100% in Swift using Apple-native technologies
+
+---
+
+## ⚡ Generate Report in 10 Seconds
+
+```bash
+cd SwiftCodeContext
+swift run codecontext analyze ~/path/to/your/project --open
+```
+
+That's it. `swift run` builds automatically if needed, then opens the HTML report in Safari. No separate `swift build` step required.
+
 ---
 
 ## 🚀 Quick Start

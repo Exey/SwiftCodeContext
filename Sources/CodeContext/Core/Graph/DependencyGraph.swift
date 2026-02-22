@@ -4,88 +4,103 @@ import Foundation
 // MARK: - Dependency Graph
 
 /// Directed dependency graph with PageRank scoring.
-/// Pure Swift implementation — no JGraphT needed.
 final class DependencyGraph: @unchecked Sendable {
 
-    // Adjacency lists
     private(set) var vertices: Set<String> = []
     private(set) var edges: [(source: String, target: String)] = []
-    private var adjacency: [String: Set<String>] = [:]      // outgoing
-    private var reverseAdj: [String: Set<String>] = [:]      // incoming
-
+    private var adjacency: [String: Set<String>] = [:]
+    private var reverseAdj: [String: Set<String>] = [:]
     private(set) var pageRankScores: [String: Double] = [:]
     private(set) var hasCycles: Bool = false
 
     // MARK: - Build
 
     func build(from parsedFiles: [ParsedFile]) {
-        // Build import → file mapping
+        let startTime = CFAbsoluteTimeGetCurrent()
         var nameToPath: [String: String] = [:]
 
+        print("   Registering \(parsedFiles.count) vertices...")
         for file in parsedFiles {
-            let path = file.filePath
-            addVertex(path)
-
-            let name = file.fileNameWithoutExtension
-            nameToPath[name] = path
-
+            addVertex(file.filePath)
+            nameToPath[file.fileNameWithoutExtension] = file.filePath
             if !file.moduleName.isEmpty {
-                nameToPath[file.moduleName] = path
+                nameToPath[file.moduleName] = file.filePath
             }
         }
 
-        // 1. Import-based edges (cross-module)
+        // Import-based edges (cross-module)
+        print("   Building import-based edges...")
         for source in parsedFiles {
             for importName in source.imports {
-                let components = importName.components(separatedBy: ".")
-                let baseName = components.last ?? importName
+                let baseName = importName.components(separatedBy: ".").last ?? importName
                 if let targetPath = nameToPath[importName] ?? nameToPath[baseName] {
                     addEdge(from: source.filePath, to: targetPath)
                 }
             }
         }
+        let importEdges = edges.count
+        let t1 = CFAbsoluteTimeGetCurrent() - startTime
+        print("   Import edges: \(importEdges) (\(String(format: "%.1f", t1))s)")
 
-        // 2. Type-reference edges (intra-module)
-        // If FileA declares `class Foo` and FileB mentions `Foo`, draw edge B→A
-        // This captures real dependencies within the same Swift module.
+        // Type-reference edges (intra-module) — capped for performance
+        print("   Building type-reference edges...")
         buildTypeReferenceEdges(from: parsedFiles)
+        let typeRefEdges = edges.count - importEdges
+        let t2 = CFAbsoluteTimeGetCurrent() - startTime
+        print("   Type-reference edges: \(typeRefEdges) (\(String(format: "%.1f", t2))s)")
 
-        // Detect cycles
         detectCycles()
+
+        let t3 = CFAbsoluteTimeGetCurrent() - startTime
+        print("   Graph complete: \(vertices.count) nodes, \(edges.count) edges (\(String(format: "%.1f", t3))s)")
     }
 
-    /// Build edges based on type name references across files.
-    /// Groups files by package and checks if declared type names appear in other files' source.
+    /// Build edges based on type references within each package.
+    /// Performance: caps file content reads per package.
     private func buildTypeReferenceEdges(from parsedFiles: [ParsedFile]) {
-        // Group by package (empty = App)
         var byPackage: [String: [ParsedFile]] = [:]
         for file in parsedFiles {
             let key = file.packageName.isEmpty ? "__app__" : file.packageName
             byPackage[key, default: []].append(file)
         }
 
-        for (_, packageFiles) in byPackage {
-            // Collect all declared type names → file path
-            // Only real declarations (not extensions), 3+ chars to avoid false positives
-            var typeToFile: [(name: String, path: String)] = []
-            for file in packageFiles {
-                for decl in file.declarations where decl.kind != .extension && decl.name.count >= 3 {
-                    typeToFile.append((name: decl.name, path: file.filePath))
+        let totalPackages = byPackage.count
+        print("   Scanning type references across \(totalPackages) modules...")
+
+        for (pkgIdx, (pkgName, packageFiles)) in byPackage.enumerated() {
+            let displayName = pkgName == "__app__" ? "App" : pkgName
+            // For very large packages, only process top files by line count
+            let cappedFiles: [ParsedFile]
+            if packageFiles.count > 200 {
+                cappedFiles = Array(packageFiles.sorted { $0.lineCount > $1.lineCount }.prefix(200))
+                print("   [\(pkgIdx+1)/\(totalPackages)] \(displayName): \(packageFiles.count) files (capped to 200)")
+            } else {
+                cappedFiles = packageFiles
+                if packageFiles.count > 20 {
+                    print("   [\(pkgIdx+1)/\(totalPackages)] \(displayName): \(packageFiles.count) files")
                 }
             }
 
+            var typeToFile: [(name: String, path: String)] = []
+            for file in cappedFiles {
+                for decl in file.declarations where decl.kind != .extension && decl.name.count >= 4 {
+                    typeToFile.append((name: decl.name, path: file.filePath))
+                }
+            }
             guard !typeToFile.isEmpty else { continue }
 
-            // For each file, read its source and check for type references from other files
-            for file in packageFiles {
-                guard let content = try? String(contentsOfFile: file.filePath, encoding: .utf8) else { continue }
+            // Limit: skip if too many declarations (would be O(N*M) regex)
+            if typeToFile.count > 500 {
+                // Only keep declarations from top-scoring files
+                let topPaths = Set(cappedFiles.prefix(100).map(\.filePath))
+                typeToFile = typeToFile.filter { topPaths.contains($0.path) }
+            }
 
+            for file in cappedFiles {
+                guard let content = try? String(contentsOfFile: file.filePath, encoding: .utf8) else { continue }
                 for (typeName, declPath) in typeToFile {
                     guard declPath != file.filePath else { continue }
-
-                    // Check if this type name is used in the file content
-                    // Use word boundary check to avoid substring matches
-                    if contentContainsType(content, typeName: typeName) {
+                    if fastContainsType(content, typeName: typeName) {
                         addEdge(from: file.filePath, to: declPath)
                     }
                 }
@@ -93,17 +108,20 @@ final class DependencyGraph: @unchecked Sendable {
         }
     }
 
-    /// Checks if content contains a type name as a whole word (not as a substring).
-    private func contentContainsType(_ content: String, typeName: String) -> Bool {
-        // Quick check first
+    /// Fast type-name check using String.range (no regex compilation overhead).
+    private func fastContainsType(_ content: String, typeName: String) -> Bool {
         guard content.contains(typeName) else { return false }
-
-        // Word boundary check: type name surrounded by non-alphanumeric chars
-        // Patterns: `: TypeName`, `TypeName.`, `TypeName(`, `<TypeName>`, etc.
-        let pattern = "(?<![a-zA-Z0-9_])\(NSRegularExpression.escapedPattern(for: typeName))(?![a-zA-Z0-9_])"
-        guard let regex = try? NSRegularExpression(pattern: pattern) else { return false }
-        let range = NSRange(content.startIndex..., in: content)
-        return regex.firstMatch(in: content, range: range) != nil
+        // Search for typeName with word boundaries
+        var searchRange = content.startIndex..<content.endIndex
+        while let range = content.range(of: typeName, range: searchRange) {
+            let before = range.lowerBound > content.startIndex ? content[content.index(before: range.lowerBound)] : Character(" ")
+            let after = range.upperBound < content.endIndex ? content[range.upperBound] : Character(" ")
+            if !before.isLetterOrDigit && before != "_" && !after.isLetterOrDigit && after != "_" {
+                return true
+            }
+            searchRange = range.upperBound..<content.endIndex
+        }
+        return false
     }
 
     // MARK: - Graph Operations
@@ -115,130 +133,97 @@ final class DependencyGraph: @unchecked Sendable {
     }
 
     func addEdge(from source: String, to target: String) {
-        guard source != target,
-              vertices.contains(source),
-              vertices.contains(target),
+        guard source != target, vertices.contains(source), vertices.contains(target),
               !(adjacency[source]?.contains(target) ?? false) else { return }
-
+        edges.append((source: source, target: target))
         adjacency[source]?.insert(target)
         reverseAdj[target]?.insert(source)
-        edges.append((source: source, target: target))
     }
 
-    func outDegree(of vertex: String) -> Int {
-        adjacency[vertex]?.count ?? 0
-    }
+    func outDegree(of vertex: String) -> Int { adjacency[vertex]?.count ?? 0 }
+    func inDegree(of vertex: String) -> Int { reverseAdj[vertex]?.count ?? 0 }
 
-    func inDegree(of vertex: String) -> Int {
-        reverseAdj[vertex]?.count ?? 0
-    }
+    // MARK: - Analysis
 
-    func neighbors(of vertex: String) -> Set<String> {
-        adjacency[vertex] ?? []
-    }
+    func analyze() { computePageRank() }
 
-    // MARK: - PageRank
-
-    /// Compute PageRank with damping factor and iteration limit.
     func computePageRank(damping: Double = 0.85, iterations: Int = 100) {
-        guard !vertices.isEmpty else { return }
-
         let n = Double(vertices.count)
-        var scores: [String: Double] = [:]
-
-        // Initialize uniformly
-        for v in vertices {
-            scores[v] = 1.0 / n
-        }
+        guard n > 0 else { return }
+        var scores = Dictionary(uniqueKeysWithValues: vertices.map { ($0, 1.0 / n) })
 
         for _ in 0..<iterations {
-            var newScores: [String: Double] = [:]
-
+            var newScores = Dictionary(uniqueKeysWithValues: vertices.map { ($0, (1.0 - damping) / n) })
             for v in vertices {
-                var rank = (1.0 - damping) / n
-
-                // Sum contributions from all vertices pointing to v
-                if let incoming = reverseAdj[v] {
-                    for u in incoming {
-                        let outDeg = adjacency[u]?.count ?? 1
-                        rank += damping * (scores[u] ?? 0) / Double(max(outDeg, 1))
-                    }
+                let outNeighbors = adjacency[v] ?? []
+                if outNeighbors.isEmpty { continue }
+                let share = (scores[v] ?? 0) / Double(outNeighbors.count)
+                for neighbor in outNeighbors {
+                    newScores[neighbor, default: 0] += damping * share
                 }
-
-                newScores[v] = rank
             }
-
             scores = newScores
         }
-
         pageRankScores = scores
     }
 
-    /// Analyze the graph: compute PageRank.
-    func analyze() {
-        computePageRank()
+    // MARK: - Hotspots
+
+    struct HotspotEntry {
+        let path: String
+        let score: Double
     }
 
-    func getTopHotspots(limit: Int = 10) -> [(path: String, score: Double)] {
+    func getTopHotspots(limit: Int = 15) -> [HotspotEntry] {
         pageRankScores
             .sorted { $0.value > $1.value }
             .prefix(limit)
-            .map { (path: $0.key, score: $0.value) }
+            .map { HotspotEntry(path: $0.key, score: $0.value) }
     }
 
-    // MARK: - Cycle Detection (DFS)
+    // MARK: - Cycle Detection
 
     private func detectCycles() {
-        enum Color { case white, gray, black }
-        var color: [String: Color] = [:]
-        for v in vertices { color[v] = .white }
-
-        func dfs(_ u: String) -> Bool {
-            color[u] = .gray
-            for v in adjacency[u] ?? [] {
-                if color[v] == .gray { return true }       // back edge → cycle
-                if color[v] == .white, dfs(v) { return true }
+        var visited: Set<String> = []
+        var onStack: Set<String> = []
+        func dfs(_ v: String) -> Bool {
+            visited.insert(v)
+            onStack.insert(v)
+            for neighbor in adjacency[v] ?? [] {
+                if onStack.contains(neighbor) { return true }
+                if !visited.contains(neighbor) && dfs(neighbor) { return true }
             }
-            color[u] = .black
+            onStack.remove(v)
             return false
         }
-
-        for v in vertices {
-            if color[v] == .white, dfs(v) {
-                hasCycles = true
-                print("⚠️  Circular dependencies detected in the codebase.")
-                return
-            }
-        }
+        hasCycles = vertices.contains { !visited.contains($0) && dfs($0) }
+        if hasCycles { print("⚠️  Circular dependencies detected in the codebase.") }
     }
 
-    // MARK: - Topological Sort (Kahn's Algorithm)
+    // MARK: - Topological Sort
 
-    /// Returns topological order, or nil if cycles exist.
     func topologicalSort() -> [String]? {
-        var inDegrees: [String: Int] = [:]
-        for v in vertices { inDegrees[v] = 0 }
-        for (_, targets) in adjacency {
-            for t in targets {
-                inDegrees[t, default: 0] += 1
-            }
+        guard !hasCycles else { return nil }
+        var inDegrees = Dictionary(uniqueKeysWithValues: vertices.map { ($0, 0) })
+        for (_, neighbors) in adjacency {
+            for n in neighbors { inDegrees[n, default: 0] += 1 }
         }
-
         var queue: [String] = vertices.filter { inDegrees[$0] == 0 }.sorted()
         var result: [String] = []
-
         while !queue.isEmpty {
             let v = queue.removeFirst()
             result.append(v)
-
             for neighbor in adjacency[v] ?? [] {
                 inDegrees[neighbor]! -= 1
-                if inDegrees[neighbor] == 0 {
-                    queue.append(neighbor)
-                }
+                if inDegrees[neighbor] == 0 { queue.append(neighbor) }
             }
         }
-
         return result.count == vertices.count ? result : nil
     }
+}
+
+// MARK: - Character Extension
+
+private extension Character {
+    var isLetterOrDigit: Bool { isLetter || isNumber }
 }

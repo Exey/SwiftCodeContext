@@ -23,20 +23,32 @@ struct Declaration: Codable, Sendable {
     }
 }
 
+// MARK: - Build System
+
+enum BuildSystem: String, Codable, Sendable {
+    case spm = "SwiftPM"
+    case bazel = "Bazel"
+    case tuist = "Tuist"
+    case unknown = "Unknown"
+}
+
 // MARK: - Parsed File
 
 struct ParsedFile: Codable, Sendable {
     let filePath: String
-    let moduleName: String       // inferred from Sources/<Module>/...
+    let moduleName: String
     let imports: [String]
     var gitMetadata: GitMetadata = GitMetadata()
     let description: String
     let lineCount: Int
     let declarations: [Declaration]
 
-    /// Package name inferred from path: Packages/<PackageName>/...
+    /// Package name inferred from directory structure.
     /// Empty string if file is in the main app target.
     let packageName: String
+
+    /// Build system that manages this module.
+    let buildSystem: BuildSystem
 
     var fileName: String {
         URL(fileURLWithPath: filePath).lastPathComponent

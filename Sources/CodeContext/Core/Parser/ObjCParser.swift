@@ -31,22 +31,38 @@ final class ObjCParser: LanguageParser, @unchecked Sendable {
         }
 
         let pathComponents = file.pathComponents
-        let packageName: String = {
-            if let pkgIdx = pathComponents.firstIndex(of: "Packages"),
-               pkgIdx + 1 < pathComponents.count {
-                return pathComponents[pkgIdx + 1]
+
+        // Module detection — same logic as SwiftParser
+        var packageName = ""
+        var buildSystem: BuildSystem = .unknown
+        if let pkgIdx = pathComponents.firstIndex(of: "Packages"),
+           pkgIdx + 1 < pathComponents.count {
+            packageName = pathComponents[pkgIdx + 1]
+            buildSystem = .spm
+        } else if let sourcesIdx = pathComponents.lastIndex(of: "Sources"), sourcesIdx > 1 {
+            let moduleRootPath = pathComponents[0..<sourcesIdx].joined(separator: "/")
+            let moduleDirName = pathComponents[sourcesIdx - 1]
+            let fm = FileManager.default
+            if fm.fileExists(atPath: moduleRootPath + "/Package.swift") {
+                packageName = moduleDirName; buildSystem = .spm
+            } else if fm.fileExists(atPath: moduleRootPath + "/BUILD") || fm.fileExists(atPath: moduleRootPath + "/BUILD.bazel") {
+                packageName = moduleDirName; buildSystem = .bazel
+            } else if fm.fileExists(atPath: moduleRootPath + "/Project.swift") {
+                packageName = moduleDirName; buildSystem = .tuist
             }
-            return ""
-        }()
+        }
+
+        var moduleName = ""
+        if let sourcesIdx = pathComponents.lastIndex(of: "Sources"),
+           sourcesIdx + 1 < pathComponents.count {
+            moduleName = pathComponents[sourcesIdx + 1]
+        }
 
         return ParsedFile(
-            filePath: file.path,
-            moduleName: "",
-            imports: imports,
-            description: "",
-            lineCount: content.components(separatedBy: "\n").count,
-            declarations: declarations,
-            packageName: packageName
+            filePath: file.path, moduleName: moduleName, imports: imports,
+            description: "", lineCount: content.components(separatedBy: "\n").count,
+            declarations: declarations, packageName: packageName,
+            buildSystem: buildSystem
         )
     }
 }

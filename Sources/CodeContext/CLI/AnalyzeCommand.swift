@@ -69,12 +69,14 @@ struct AnalyzeCommand: AsyncParsableCommand {
         let reportPath = "\(outputDir)/index.html"
 
         let generator = ReportGenerator()
+        let projectName = URL(fileURLWithPath: path).lastPathComponent
         try generator.generate(
             graph: graph,
             outputPath: reportPath,
             parsedFiles: enrichedFiles,
             branchName: result.branchName,
-            authorStats: result.authorStats
+            authorStats: result.authorStats,
+            projectName: projectName
         )
 
         let reportURL = URL(fileURLWithPath: reportPath).standardizedFileURL
