@@ -76,7 +76,8 @@ struct AnalyzeCommand: AsyncParsableCommand {
             parsedFiles: enrichedFiles,
             branchName: result.branchName,
             authorStats: result.authorStats,
-            projectName: projectName
+            projectName: projectName,
+            metadata: result.metadata
         )
 
         let reportURL = URL(fileURLWithPath: reportPath).standardizedFileURL
@@ -113,7 +114,19 @@ struct AnalyzeCommand: AsyncParsableCommand {
         }
 
         let elapsed = CFAbsoluteTimeGetCurrent() - startTime
-        print("\n✨ Complete in \(Int(elapsed * 1000))ms")
+        let totalSeconds = Int(elapsed)
+        let hours = totalSeconds / 3600
+        let minutes = (totalSeconds % 3600) / 60
+        let seconds = totalSeconds % 60
+        let timeStr: String
+        if hours > 0 {
+            timeStr = "\(hours)h \(minutes)m \(seconds)s"
+        } else if minutes > 0 {
+            timeStr = "\(minutes)m \(seconds)s"
+        } else {
+            timeStr = String(format: "%.1fs", elapsed)
+        }
+        print("\n✨ Complete in \(timeStr)")
 
         if open {
             #if os(macOS)

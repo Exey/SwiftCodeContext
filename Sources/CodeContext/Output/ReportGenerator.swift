@@ -216,7 +216,8 @@ struct ReportGenerator {
         parsedFiles: [ParsedFile],
         branchName: String,
         authorStats: [String: AuthorStats],
-        projectName: String = ""
+        projectName: String = "",
+        metadata: ProjectMetadata = ProjectMetadata()
     ) throws {
         let hotspots = graph.getTopHotspots(limit: 15)
         let fileMap = Dictionary(uniqueKeysWithValues: parsedFiles.map { ($0.filePath, $0) })
@@ -264,15 +265,46 @@ struct ReportGenerator {
         let importsHTML: String = {
             var sections: [String] = []
 
+            // Compute package line/decl percentages for highlighting
+            let totalLinesAll = parsedFiles.reduce(0) { $0 + $1.lineCount }
+            let totalDeclsAll = parsedFiles.flatMap(\.declarations).filter { $0.kind != .extension }.count
+            var pkgLines: [String: Int] = [:]
+            var pkgDecls: [String: Int] = [:]
+            for file in parsedFiles {
+                let key = file.packageName.isEmpty ? "App" : file.packageName
+                pkgLines[key, default: 0] += file.lineCount
+                pkgDecls[key, default: 0] += file.declarations.filter { $0.kind != .extension }.count
+            }
+            let lineThreshold = Double(totalLinesAll) * 0.03
+            let declThreshold = Double(totalDeclsAll) * 0.05
+
             // 1. Local Packages — column grid with clickable links to package sections
             if let localNames = classifiedImports[.local], !localNames.isEmpty {
-                let tags = localNames.sorted().map { name -> String in
+                // Build list: App first (always highlighted), then sorted alphabetically
+                let allNames = localNames.sorted()
+                // Add "App" at the beginning if it's not already in local imports
+                let hasApp = pkgLines["App", default: 0] > 0
+
+                var tags: [String] = []
+
+                // App module first if it exists
+                if hasApp {
+                    let appLines = pkgLines["App", default: 0]
+                    let appTag = "<a href='#pkg-App' class='tag tag-local pkg-link pkg-major'><span class='pkg-name'>📱 App</span><span class='bs-badge-right'>\(appLines.formatted()) loc</span></a>"
+                    tags.append(appTag)
+                }
+
+                for name in allNames {
                     let bs = packageBuildSystem[name]
                     let bsLabel = bs != nil && bs != .unknown ? "<span class='bs-badge-right'>\(bs!.rawValue)</span>" : ""
                     let anchor = name.replacingOccurrences(of: " ", with: "-")
-                    return "<a href='#pkg-\(anchor)' class='tag tag-local pkg-link'><span class='pkg-name'>\(name)</span>\(bsLabel)</a>"
-                }.joined(separator: "\n")
-                sections.append("<div class='import-group'><h3>🏠 Local Packages <span class='count'>(\(localNames.count))</span></h3><div class='pkg-grid'>\(tags)</div></div>")
+                    let isMajor = Double(pkgLines[name, default: 0]) >= lineThreshold || Double(pkgDecls[name, default: 0]) >= declThreshold
+                    let majorClass = isMajor ? " pkg-major" : ""
+                    tags.append("<a href='#pkg-\(anchor)' class='tag tag-local pkg-link\(majorClass)'><span class='pkg-name'>\(name)</span>\(bsLabel)</a>")
+                }
+
+                let totalWithApp = localNames.count + (hasApp ? 1 : 0)
+                sections.append("<div class='import-group'><h3>🏠 Local Packages <span class='count'>(\(totalWithApp))</span></h3><div class='pkg-grid'>\(tags.joined(separator: "\n"))</div></div>")
             }
 
             // 2. External Dependencies
@@ -437,7 +469,8 @@ struct ReportGenerator {
         <head>
             <meta charset="UTF-8">
             <meta name="viewport" content="width=device-width, initial-scale=1.0">
-            <title>SwiftCodeContext — \(esc(projectName))</title>
+            <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🔍</text></svg>">
+            <title>🔍 SwiftCodeContext — \(esc(projectName))</title>
             <style>
                 :root { --bg: #f5f5f7; --card: #fff; --border: #e5e5ea; --text: #1d1d1f; --text2: #424245; --text3: #86868b; --accent: #0071e3; --red: #ff3b30; }
                 * { box-sizing: border-box; }
@@ -465,6 +498,7 @@ struct ReportGenerator {
                 .pkg-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 4px 8px; }
                 .pkg-link { display: flex; align-items: center; justify-content: space-between; text-decoration: none; cursor: pointer; transition: background 0.15s; }
                 .pkg-link:hover { background: #bbdefb; }
+                .pkg-major { border: 2px solid var(--accent); font-weight: 600; }
                 .pkg-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
                 .bs-badge-right { background: rgba(0,0,0,0.07); color: var(--text3); font-size: 9px; padding: 1px 5px; border-radius: 4px; margin-left: auto; padding-left: 6px; flex-shrink: 0; font-weight: 400; letter-spacing: 0.02em; }
                 .bs-badge { background: rgba(0,0,0,0.08); color: var(--text3); font-size: 10px; padding: 1px 5px; border-radius: 4px; margin-left: 2px; font-weight: 400; }
@@ -494,6 +528,8 @@ struct ReportGenerator {
                 <h1>🔍 SwiftCodeContext Report — \(esc(projectName.isEmpty ? "Project" : projectName))</h1>
                 <p class="subtitle">Generated \(Date().formatted()) · <span class="branch-badge">\(esc(branchName))</span> branch</p>
                 <div class="summary-grid">
+                    \(!metadata.swiftVersion.isEmpty ? "<div class=\"summary-card\"><div class=\"num\" style=\"font-size:20px\">Swift \(esc(metadata.swiftVersion))</div><div class=\"label\">Language</div></div>" : "")
+                    \(!metadata.deploymentTargets.isEmpty ? "<div class=\"summary-card\"><div class=\"num\" style=\"font-size:16px\">\(esc(metadata.deploymentTargets.joined(separator: ", ")))</div><div class=\"label\">Min Deployment</div></div>" : "")
                     <div class="summary-card"><div class="num">\(parsedFiles.count)</div><div class="label">Swift Files</div></div>
                     <div class="summary-card"><div class="num">\(totalLines.formatted())</div><div class="label">Lines of Code</div></div>
                     <div class="summary-card"><div class="num">\(totalDecls)</div><div class="label">Declarations</div></div>
