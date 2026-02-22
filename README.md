@@ -15,6 +15,8 @@ swift run codecontext analyze ~/path/to/your/project --open
 
 That's it. `swift run` builds automatically if needed, then opens the HTML report in Safari. No separate `swift build` step required.
 
+![Based on https://github.com/TelegramMessenger/Telegram-iOS](https://i.postimg.cc/V6J69LRg/tg.png)
+
 ---
 
 ## 🚀 Quick Start
