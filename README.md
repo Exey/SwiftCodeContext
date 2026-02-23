@@ -17,6 +17,30 @@ That's it. `swift run` builds automatically if needed, then opens the HTML repor
 
 ![Based on https://github.com/TelegramMessenger/Telegram-iOS](https://i.postimg.cc/V6J69LRg/tg.png)
 
+### What the Report Contains
+
+The generated HTML report includes:
+
+1. **📊 Summary** — total files, lines of code, declarations by type (structs, classes, enums, protocols, actors), and package count
+
+2. **👥 Team Contribution Map** — developer activity tracking with files modified, commit counts, and first/last change dates
+
+3. **📚 Dependencies & Imports** — comprehensive classification into Apple frameworks, external dependencies, and local Swift packages with interactive tag clouds
+
+4. **🔥 Knowledge Hotspots** — files with the highest PageRank scores, identifying the most connected and architecturally significant code. Each entry includes clickable module badges for quick navigation and inline documentation previews where available
+
+5. **📋 Module Insights** — quality metrics across packages, including top modules by TODO/FIXME density and technical debt indicators
+
+6. **📏 Longest Functions** — ranked list of functions with the highest line counts, featuring clickable module badges for context and quick navigation to potential refactoring candidates
+
+7. **📦 Packages & Modules** — detailed breakdown of each local Swift package with:
+   - Complete file inventory sorted by lines of code
+   - Declaration statistics by type (classes, structs, enums, protocols, actors, extensions)
+   - Interactive force-directed dependency graph per package, colored by declaration type (🔵 classes, 🟢 structs, 🟡 enums, 🔴 actors)
+   - File-level annotations showing code intent through inline documentation previews
+   - Precise line counts and declaration tags for every file
+   - Package-level metrics including total files, lines of code, and declaration distribution
+
 ---
 
 ## 🚀 Quick Start
@@ -125,31 +149,6 @@ codecontext ask "What would break if I refactored UserService?"
 codecontext init
 # Creates .codecontext.json with sensible defaults
 ```
-
-### What the Report Contains
-
-The generated HTML report includes:
-
-1. **📊 Summary** — total files, lines of code, declarations by type (structs, classes, enums, protocols, actors), and package count
-
-2. **👥 Team Contribution Map** — developer activity tracking with files modified, commit counts, and first/last change dates
-
-3. **📚 Dependencies & Imports** — comprehensive classification into Apple frameworks, external dependencies, and local Swift packages with interactive tag clouds
-
-4. **🔥 Knowledge Hotspots** — files with the highest PageRank scores, identifying the most connected and architecturally significant code. Each entry includes clickable module badges for quick navigation and inline documentation previews where available
-
-5. **📋 Module Insights** — quality metrics across packages, including top modules by TODO/FIXME density and technical debt indicators
-
-6. **📏 Longest Functions** — ranked list of functions with the highest line counts, featuring clickable module badges for context and quick navigation to potential refactoring candidates
-
-7. **📦 Packages & Modules** — detailed breakdown of each local Swift package with:
-   - Complete file inventory sorted by lines of code
-   - Declaration statistics by type (classes, structs, enums, protocols, actors, extensions)
-   - Interactive force-directed dependency graph per package, colored by declaration type (🔵 classes, 🟢 structs, 🟡 enums, 🔴 actors)
-   - File-level annotations showing code intent through inline documentation previews
-   - Precise line counts and declaration tags for every file
-   - Package-level metrics including total files, lines of code, and declaration distribution
-
 ---
 
 ## ⚙️ Configuration
