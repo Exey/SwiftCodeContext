@@ -40,7 +40,11 @@ struct PackageSummary {
     let name: String
     let files: [ParsedFile]
     var totalLines: Int { files.reduce(0) { $0 + $1.lineCount } }
-    var declarations: [Declaration] { files.flatMap(\.declarations) }
+
+    /// Reserved words that regex may capture from "class func", "class var" etc.
+    private static let invalidNames: Set<String> = ["func", "var", "let", "subscript", "init", "deinit", "typealias", "case"]
+
+    var declarations: [Declaration] { files.flatMap(\.declarations).filter { !Self.invalidNames.contains($0.name) } }
     var realDeclarations: [Declaration] { declarations.filter { $0.kind != .extension } }
     var protocolCount: Int { declarations.filter { $0.kind == .protocol }.count }
     var classCount: Int { declarations.filter { $0.kind == .class }.count }
@@ -360,9 +364,12 @@ struct ReportGenerator {
                 return " <span class='bs-badge'>\(bs.rawValue)</span>"
             }()
 
+            // Reserved words that cannot be real type names (e.g. "class func" produces kind=class, name=func)
+            let invalidNames: Set<String> = ["func", "var", "let", "subscript", "init", "deinit", "typealias", "case"]
+
             let fileRows = sortedFiles.map { file -> String in
-                let decls = file.declarations.filter { $0.kind != .extension }
-                let exts = file.declarations.filter { $0.kind == .extension }
+                let decls = file.declarations.filter { $0.kind != .extension && !invalidNames.contains($0.name) }
+                let exts = file.declarations.filter { $0.kind == .extension && !invalidNames.contains($0.name) }
                 var parts: [String] = decls.map { "\(kindIcon($0.kind))&thinsp;\(esc($0.name))" }
                 parts += exts.map { "🔹&thinsp;\(esc($0.name))" }
                 let declStr = parts.isEmpty ? "—" : parts.joined(separator: "&ensp;")
@@ -453,7 +460,8 @@ struct ReportGenerator {
 
         // ─── 5. Summary ───
         let totalLines = parsedFiles.reduce(0) { $0 + $1.lineCount }
-        let allDecls = parsedFiles.flatMap(\.declarations)
+        let invalidDeclNames: Set<String> = ["func", "var", "let", "subscript", "init", "deinit", "typealias", "case"]
+        let allDecls = parsedFiles.flatMap(\.declarations).filter { !invalidDeclNames.contains($0.name) }
         let totalDecls = allDecls.filter { $0.kind != .extension }.count
         let totalExts = allDecls.filter { $0.kind == .extension }.count
         let totalStructs = allDecls.filter { $0.kind == .struct }.count
@@ -559,8 +567,10 @@ struct ReportGenerator {
                 @media (max-width: 768px) {
                     body { padding: 8px; }
                     .card { padding: 14px; border-radius: 12px; }
-                    .summary-grid { grid-template-columns: repeat(2, 1fr); gap: 6px; }
-                    .summary-card .num { font-size: 20px; }
+                    .summary-grid { grid-template-columns: repeat(3, 1fr); gap: 6px; }
+                    .summary-card { padding: 10px 4px; }
+                    .summary-card .num { font-size: 18px; }
+                    .summary-card .label { font-size: 9px; }
                     h1 { font-size: 20px; }
                     h2 { font-size: 17px; }
                     .team-table, .file-table { font-size: 12px; min-width: 500px; }
@@ -590,11 +600,6 @@ struct ReportGenerator {
                     <div class="summary-card"><div class="num">\(totalExts)</div><div class="label">Extensions</div></div>
                     <div class="summary-card"><div class="num">\(packages.count)</div><div class="label">Packages</div></div>
                     \(totalTodos + totalFixmes > 0 ? "<div class=\"summary-card\"><div class=\"num\">\(totalTodos + totalFixmes)</div><div class=\"label\">TODO/FIXME</div></div>" : "")
-                    <div class="summary-card"><div class="num">\(totalStructs)</div><div class="label">🟢 Structs</div></div>
-                    <div class="summary-card"><div class="num">\(totalLines.formatted())</div><div class="label">Lines of Code</div></div>
-                    <div class="summary-card"><div class="num">\(totalDecls)</div><div class="label">Declarations</div></div>
-                    <div class="summary-card"><div class="num">\(totalExts)</div><div class="label">Extensions</div></div>
-                    <div class="summary-card"><div class="num">\(packages.count)</div><div class="label">Packages</div></div>
                     <div class="summary-card"><div class="num">\(totalStructs)</div><div class="label">🟢 Structs</div></div>
                     <div class="summary-card"><div class="num">\(totalClasses)</div><div class="label">🔵 Classes</div></div>
                     <div class="summary-card"><div class="num">\(totalEnums)</div><div class="label">🟡 Enums</div></div>

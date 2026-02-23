@@ -17,9 +17,15 @@ final class SwiftParser: LanguageParser, @unchecked Sendable {
     )
 
     private let declarationPattern = try! NSRegularExpression(
-        pattern: #"^\s*(?:public\s+|internal\s+|private\s+|fileprivate\s+|open\s+)?(?:final\s+)?(?:nonisolated\s+)?(class|struct|enum|protocol|actor|extension)\s+(\w+)"#,
+        pattern: #"^\s*(?:public\s+|internal\s+|private\s+|fileprivate\s+|open\s+)?(?:final\s+)?(?:nonisolated\s+)?(class|struct|enum|protocol|actor|extension)\s+([\w.]+)"#,
         options: .anchorsMatchLines
     )
+
+    /// Words that cannot be a type name — "class func" means a static method, not a class named "func"
+    private static let invalidDeclNames: Set<String> = [
+        "func", "var", "let", "subscript", "init", "deinit", "typealias", "case",
+        "where", "if", "guard", "switch", "for", "while", "return", "throw", "try",
+    ]
 
     private let docCommentBlockPattern = try! NSRegularExpression(
         pattern: #"/\*\*([\s\S]*?)\*/"#, options: []
@@ -45,8 +51,11 @@ final class SwiftParser: LanguageParser, @unchecked Sendable {
         let declarations = declarationPattern.matches(in: content, range: range).compactMap { match -> Declaration? in
             guard let kindRange = Range(match.range(at: 1), in: content),
                   let nameRange = Range(match.range(at: 2), in: content) else { return nil }
+            let name = String(content[nameRange])
+            // "class func foo()" → kind=class, name=func → skip
+            guard !Self.invalidDeclNames.contains(name) else { return nil }
             guard let kind = Declaration.Kind(rawValue: String(content[kindRange])) else { return nil }
-            return Declaration(name: String(content[nameRange]), kind: kind)
+            return Declaration(name: name, kind: kind)
         }
 
         let pathComponents = file.pathComponents

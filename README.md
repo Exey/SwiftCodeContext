@@ -29,7 +29,7 @@ The generated HTML report includes:
 
 4. **🔥 Knowledge Hotspots** — files with the highest PageRank scores, identifying the most connected and architecturally significant code. Each entry includes clickable module badges for quick navigation and inline documentation previews where available
 
-5. **📋 Module Insights** — quality metrics across packages, including top modules by TODO/FIXME density and technical debt indicators
+5. **📋 Module Insights** — package penetration analysis showing which modules are imported by the most other packages (foundational dependencies), plus quality metrics including top modules by TODO/FIXME density and technical debt indicators
 
 6. **📏 Longest Functions** — ranked list of functions with the highest line counts, featuring clickable module badges for context and quick navigation to potential refactoring candidates
 

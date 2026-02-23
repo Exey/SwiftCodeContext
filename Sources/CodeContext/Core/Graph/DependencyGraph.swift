@@ -73,12 +73,11 @@ final class DependencyGraph: @unchecked Sendable {
             let cappedFiles: [ParsedFile]
             if packageFiles.count > 200 {
                 cappedFiles = Array(packageFiles.sorted { $0.lineCount > $1.lineCount }.prefix(200))
-                print("   [\(pkgIdx+1)/\(totalPackages)] \(displayName): \(packageFiles.count) files (capped to 200)")
             } else {
                 cappedFiles = packageFiles
-                if packageFiles.count > 20 {
-                    print("   [\(pkgIdx+1)/\(totalPackages)] \(displayName): \(packageFiles.count) files")
-                }
+            }
+            if packageFiles.count > 20 {
+                print("   [\(pkgIdx+1)/\(totalPackages)] \(displayName): \(packageFiles.count) files")
             }
 
             var typeToFile: [(name: String, path: String)] = []
