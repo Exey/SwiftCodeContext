@@ -394,10 +394,10 @@ struct ReportGenerator {
                 </h3>
                 <p class="stats-detail">\(statsParts.joined(separator: " · "))</p>
                 \(showGraph ? "<div id='\(graphId)' class='pkg-graph-container'></div>" : "")
-                <table class="file-table">
+                <div class="table-wrap"><table class="file-table">
                     <thead><tr><th>File</th><th>Lines</th><th>Decl</th><th>Declarations</th></tr></thead>
                     <tbody>\(fileRows)</tbody>
-                </table>
+                </table></div>
             </div>
             """
 
@@ -479,6 +479,19 @@ struct ReportGenerator {
             .sorted { $0.value + (moduleFixmes[$0.key] ?? 0) > $1.value + (moduleFixmes[$1.key] ?? 0) }
             .prefix(50)
 
+        // Package penetration: how many other packages import each package
+        var pkgImportedBy: [String: Set<String>] = [:]
+        let localPkgSet = Set(parsedFiles.compactMap { $0.packageName.isEmpty ? nil : $0.packageName })
+        for file in parsedFiles {
+            let srcPkg = file.packageName.isEmpty ? "App" : file.packageName
+            for imp in file.imports {
+                if localPkgSet.contains(imp) && imp != srcPkg {
+                    pkgImportedBy[imp, default: []].insert(srcPkg)
+                }
+            }
+        }
+        let topPenetration = pkgImportedBy.sorted { $0.value.count > $1.value.count }.prefix(20)
+
         // Longest functions across all files
         let allFunctions = parsedFiles.compactMap(\.longestFunction)
         let topLongestFuncs = allFunctions.sorted { $0.lineCount > $1.lineCount }.prefix(20)
@@ -542,7 +555,22 @@ struct ReportGenerator {
                 .file-desc { color: var(--text3); font-size: 12px; font-style: italic; margin-top: 2px; }
                 .decl-tags { font-size: 12px; line-height: 1.8; }
                 .pkg-graph-container { width: 100%; height: 420px; border: 1px solid var(--border); border-radius: 10px; margin-bottom: 16px; overflow: hidden; background: #fafafa; }
-                @media (max-width: 768px) { body { padding: 10px; } .card { padding: 16px; } .summary-grid { grid-template-columns: repeat(2, 1fr); } }
+                .table-wrap { width: 100%; overflow-x: auto; -webkit-overflow-scrolling: touch; }
+                @media (max-width: 768px) {
+                    body { padding: 8px; }
+                    .card { padding: 14px; border-radius: 12px; }
+                    .summary-grid { grid-template-columns: repeat(2, 1fr); gap: 6px; }
+                    .summary-card .num { font-size: 20px; }
+                    h1 { font-size: 20px; }
+                    h2 { font-size: 17px; }
+                    .team-table, .file-table { font-size: 12px; min-width: 500px; }
+                    .team-table th, .file-table th { padding: 6px; font-size: 10px; }
+                    .team-table td, .file-table td { padding: 6px; }
+                    .pkg-grid { grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); }
+                    .tag { font-size: 11px; padding: 2px 6px; }
+                    .hotspot-item { flex-direction: column; gap: 4px; }
+                    .pkg-graph-container { height: 300px; }
+                }
             </style>
             <script src="https://unpkg.com/force-graph"></script>
         </head>
@@ -576,10 +604,10 @@ struct ReportGenerator {
             </div>
             <div class="card">
                 <h2>👥 Team Contribution Map</h2>
-                <table class="team-table">
+                <div class="table-wrap"><table class="team-table">
                     <thead><tr><th>Developer</th><th>Files Modified</th><th>Commits</th><th>First Change</th><th>Last Change</th></tr></thead>
                     <tbody>\(teamRows)</tbody>
-                </table>
+                </table></div>
             </div>
             <div class="card">
                 <h2>📚 Dependencies & Imports</h2>
@@ -592,22 +620,34 @@ struct ReportGenerator {
             </div>
             <div class="card">
                 <h2>📋 Module Insights</h2>
-                <p class="subtitle">Modules by TODO / FIXME comment density.</p>
+                \(!topPenetration.isEmpty ? """
+                <h3>🔗 Package Penetration</h3>
+                <p class="subtitle">Modules imported by the most other packages — high-penetration modules are foundational dependencies.</p>
+                <div class="table-wrap"><table class="file-table">
+                    <thead><tr><th>Module</th><th>Imported by</th><th>Dependent Packages</th></tr></thead>
+                    <tbody>\(topPenetration.map { (name, dependents) -> String in
+                        let anchor = name.replacingOccurrences(of: " ", with: "-")
+                        let depList = dependents.sorted().prefix(5).joined(separator: ", ") + (dependents.count > 5 ? " …" : "")
+                        return "<tr><td><a href='#pkg-\(anchor)' class='pkg-link-inline'>\(esc(name))</a></td><td class='mono'>\(dependents.count)</td><td style='color:var(--text3);font-size:12px'>\(esc(depList))</td></tr>"
+                    }.joined(separator: "\n"))</tbody>
+                </table></div>
+                """ : "")
+                <h3>📝 TODO / FIXME</h3>
                 \(topTodoModules.isEmpty ? "<p style=\"color: var(--text3)\">No TODO or FIXME comments found across the codebase.</p>" : """
-                <table class="file-table">
+                <div class="table-wrap"><table class="file-table">
                     <thead><tr><th>Module</th><th>TODO</th><th>FIXME</th><th>Total</th></tr></thead>
                     <tbody>\(topTodoModules.map { (name, todos) -> String in
                         let fixmes = moduleFixmes[name] ?? 0
                         let anchor = name.replacingOccurrences(of: " ", with: "-")
                         return "<tr><td><a href='#pkg-\(anchor)' class='pkg-link-inline'>\(esc(name))</a></td><td>\(todos)</td><td>\(fixmes)</td><td><strong>\(todos + fixmes)</strong></td></tr>"
                     }.joined(separator: "\n"))</tbody>
-                </table>
+                </table></div>
                 """)
             </div>
             \(!topLongestFuncs.isEmpty ? """
             <div class="card">
                 <h2>📏 Longest Functions</h2>
-                <table class="file-table">
+                <div class="table-wrap"><table class="file-table">
                     <thead><tr><th>Function</th><th>Lines</th><th>File</th><th>Module</th></tr></thead>
                     <tbody>\(topLongestFuncs.map { fn -> String in
                         let fileName = URL(fileURLWithPath: fn.filePath).lastPathComponent
@@ -615,7 +655,7 @@ struct ReportGenerator {
                         let anchor = pkg.replacingOccurrences(of: " ", with: "-")
                         return "<tr><td><code>\(esc(fn.name))()</code></td><td class='mono'>\(fn.lineCount)</td><td>\(esc(fileName))</td><td><a href='#pkg-\(anchor)' class='pkg-link-inline'>\(esc(pkg))</a></td></tr>"
                     }.joined(separator: "\n"))</tbody>
-                </table>
+                </table></div>
             </div>
             """ : "")
             <div class="card">
