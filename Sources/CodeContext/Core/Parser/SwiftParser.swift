@@ -78,12 +78,74 @@ final class SwiftParser: LanguageParser, @unchecked Sendable {
             }.filter { !$0.isEmpty }.joined(separator: " ")
         }
 
+        // TODO / FIXME counts
+        let lines = content.components(separatedBy: "\n")
+        var todoCount = 0
+        var fixmeCount = 0
+        for line in lines {
+            let trimmed = line.trimmingCharacters(in: .whitespaces)
+            if trimmed.contains("// TODO") || trimmed.contains("// MARK: TODO") { todoCount += 1 }
+            if trimmed.contains("// FIXME") { fixmeCount += 1 }
+        }
+
+        // Longest function detection (simple brace-counting heuristic)
+        let longestFunc = detectLongestFunction(lines: lines, filePath: file.path)
+
         return ParsedFile(
             filePath: file.path, moduleName: moduleName, imports: imports,
             description: description, lineCount: lineCount,
             declarations: declarations, packageName: packageName,
-            buildSystem: buildSystem
+            buildSystem: buildSystem,
+            todoCount: todoCount, fixmeCount: fixmeCount,
+            longestFunction: longestFunc
         )
+    }
+
+    /// Detect the longest function/method by brace counting.
+    private func detectLongestFunction(lines: [String], filePath: String) -> FunctionInfo? {
+        var best: FunctionInfo?
+        var currentFunc: String?
+        var funcStartLine = 0
+        var braceDepth = 0
+        var inFunc = false
+
+        for (i, line) in lines.enumerated() {
+            let trimmed = line.trimmingCharacters(in: .whitespaces)
+
+            // Detect function start
+            if !inFunc && (trimmed.hasPrefix("func ") || trimmed.hasPrefix("private func ") ||
+                trimmed.hasPrefix("internal func ") || trimmed.hasPrefix("public func ") ||
+                trimmed.hasPrefix("static func ") || trimmed.hasPrefix("override func ") ||
+                trimmed.hasPrefix("@objc func ") || trimmed.hasPrefix("mutating func ") ||
+                trimmed.hasPrefix("class func ") || trimmed.hasPrefix("open func ")) {
+                // Extract function name
+                if let funcRange = trimmed.range(of: "func\\s+(\\w+)", options: .regularExpression) {
+                    let match = trimmed[funcRange]
+                    if let nameRange = match.range(of: "\\w+$", options: .regularExpression) {
+                        currentFunc = String(match[nameRange])
+                        funcStartLine = i
+                        inFunc = true
+                        braceDepth = 0
+                    }
+                }
+            }
+
+            if inFunc {
+                for ch in trimmed {
+                    if ch == "{" { braceDepth += 1 }
+                    if ch == "}" { braceDepth -= 1 }
+                }
+                if braceDepth <= 0 && trimmed.contains("}") {
+                    let length = i - funcStartLine + 1
+                    if let name = currentFunc, length > (best?.lineCount ?? 0) {
+                        best = FunctionInfo(name: name, lineCount: length, filePath: filePath)
+                    }
+                    inFunc = false
+                    currentFunc = nil
+                }
+            }
+        }
+        return best
     }
 
     // MARK: - Module/Package Detection

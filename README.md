@@ -130,15 +130,25 @@ codecontext init
 
 The generated HTML report includes:
 
-1. **📊 Summary** — total files, lines of code, declarations, packages
-2. **👥 Team Contribution Map** — developers with files modified, first/last change dates
-3. **📚 Dependencies & Imports** — classified into Apple frameworks, external deps, and local packages
-4. **📦 Packages & Modules** — each local SPM package with:
-   - File list sorted by lines of code
-   - Declaration count and types (classes, structs, enums, protocols, actors)
-   - Per-package dependency graph
-   — interactive force-directed graph colored by package
-5. **🔥 Knowledge Hotspots** — most critical files by PageRank
+1. **📊 Summary** — total files, lines of code, declarations by type (structs, classes, enums, protocols, actors), and package count
+
+2. **👥 Team Contribution Map** — developer activity tracking with files modified, commit counts, and first/last change dates
+
+3. **📚 Dependencies & Imports** — comprehensive classification into Apple frameworks, external dependencies, and local Swift packages with interactive tag clouds
+
+4. **🔥 Knowledge Hotspots** — files with the highest PageRank scores, identifying the most connected and architecturally significant code. Each entry includes clickable module badges for quick navigation and inline documentation previews where available
+
+5. **📋 Module Insights** — quality metrics across packages, including top modules by TODO/FIXME density and technical debt indicators
+
+6. **📏 Longest Functions** — ranked list of functions with the highest line counts, featuring clickable module badges for context and quick navigation to potential refactoring candidates
+
+7. **📦 Packages & Modules** — detailed breakdown of each local Swift package with:
+   - Complete file inventory sorted by lines of code
+   - Declaration statistics by type (classes, structs, enums, protocols, actors, extensions)
+   - Interactive force-directed dependency graph per package, colored by declaration type (🔵 classes, 🟢 structs, 🟡 enums, 🔴 actors)
+   - File-level annotations showing code intent through inline documentation previews
+   - Precise line counts and declaration tags for every file
+   - Package-level metrics including total files, lines of code, and declaration distribution
 
 ---
 

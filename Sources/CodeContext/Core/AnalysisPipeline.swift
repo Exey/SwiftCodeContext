@@ -5,10 +5,14 @@ import Foundation
 
 /// Detected project metadata (Swift version, deployment targets)
 struct ProjectMetadata {
-    var swiftVersion: String = ""          // e.g. "5.9", "6.0", "5.5+"
-    var swiftVersionSource: String = ""    // e.g. "Package.swift", "code analysis"
-    var deploymentTargets: [String] = []   // e.g. ["iOS 16", "macOS 13"]
-    var deploymentSource: String = ""      // e.g. "Package.swift", "Telegram-iOS.xcodeproj"
+    var swiftVersion: String = ""
+    var swiftVersionSource: String = ""
+    var deploymentTargets: [String] = []
+    var deploymentSource: String = ""
+    var appVersion: String = ""
+    var appVersionSource: String = ""
+    /// Metal shader files: (path, packageName)
+    var metalFiles: [(path: String, packageName: String)] = []
 }
 
 enum AnalysisPipeline {
@@ -40,7 +44,11 @@ enum AnalysisPipeline {
         print("   Found \(files.count) files")
 
         // Detect project metadata
-        let metadata = detectProjectMetadata(rootPath: path)
+        var metadata = detectProjectMetadata(rootPath: path)
+
+        // Scan for Metal files
+        metadata.metalFiles = scanMetalFiles(rootPath: path, config: config)
+
         if !metadata.swiftVersion.isEmpty {
             print("   🔧 Swift \(metadata.swiftVersion) (from \(metadata.swiftVersionSource))")
         } else {
@@ -50,6 +58,12 @@ enum AnalysisPipeline {
             print("   📱 Deployment: \(metadata.deploymentTargets.joined(separator: ", ")) (from \(metadata.deploymentSource))")
         } else {
             print("   📱 Deployment target: not detected")
+        }
+        if !metadata.appVersion.isEmpty {
+            print("   🏷️  App version: \(metadata.appVersion) (from \(metadata.appVersionSource))")
+        }
+        if !metadata.metalFiles.isEmpty {
+            print("   🔘 Metal shaders: \(metadata.metalFiles.count) files")
         }
 
         let cache: CacheManager? = (config.enableCache && useCache) ? CacheManager() : nil
@@ -157,13 +171,120 @@ enum AnalysisPipeline {
             }
         }
 
-        // 3. If still no Swift version, infer from code features by scanning a sample of files
+        // 3. If still no Swift version, infer from code features
         if meta.swiftVersion.isEmpty {
             meta.swiftVersion = inferSwiftVersionFromCode(rootPath: rootPath)
             if !meta.swiftVersion.isEmpty { meta.swiftVersionSource = "code analysis" }
         }
 
+        // 4. App version detection
+        detectAppVersion(rootURL: rootURL, meta: &meta)
+
         return meta
+    }
+
+    /// Detect app version from pbxproj, .bazelrc, Tuist Project.swift, or Info.plist
+    private static func detectAppVersion(rootURL: URL, meta: inout ProjectMetadata) {
+        let fm = FileManager.default
+
+        // Try .xcodeproj → MARKETING_VERSION
+        if let items = try? fm.contentsOfDirectory(atPath: rootURL.path) {
+            for item in items where item.hasSuffix(".xcodeproj") {
+                let pbxPath = rootURL.appendingPathComponent(item).appendingPathComponent("project.pbxproj").path
+                if let content = try? String(contentsOfFile: pbxPath, encoding: .utf8) {
+                    let pat = try! NSRegularExpression(pattern: "MARKETING_VERSION\\s*=\\s*([\\d.]+)")
+                    let r = NSRange(content.startIndex..., in: content)
+                    if let m = pat.firstMatch(in: content, range: r), let vr = Range(m.range(at: 1), in: content) {
+                        meta.appVersion = String(content[vr])
+                        meta.appVersionSource = item
+                        return
+                    }
+                }
+            }
+        }
+
+        // Try .bazelrc → telegramVersion=X.X.X or similar version defines
+        let bazelrcPath = rootURL.appendingPathComponent(".bazelrc").path
+        if let content = try? String(contentsOfFile: bazelrcPath, encoding: .utf8) {
+            let pat = try! NSRegularExpression(pattern: "(?:Version|version)\\s*=\\s*([\\d.]+)")
+            let r = NSRange(content.startIndex..., in: content)
+            if let m = pat.firstMatch(in: content, range: r), let vr = Range(m.range(at: 1), in: content) {
+                meta.appVersion = String(content[vr])
+                meta.appVersionSource = ".bazelrc"
+                return
+            }
+        }
+
+        // Try Tuist Project.swift → CFBundleShortVersionString
+        let tuistPath = rootURL.appendingPathComponent("Project.swift").path
+        if let content = try? String(contentsOfFile: tuistPath, encoding: .utf8) {
+            let pat = try! NSRegularExpression(pattern: "CFBundleShortVersionString[\"':\\s]+([\\d.]+)")
+            let r = NSRange(content.startIndex..., in: content)
+            if let m = pat.firstMatch(in: content, range: r), let vr = Range(m.range(at: 1), in: content) {
+                meta.appVersion = String(content[vr])
+                meta.appVersionSource = "Project.swift"
+                return
+            }
+        }
+
+        // Try Info.plist → CFBundleShortVersionString
+        let plistPaths = ["Info.plist", "Support/Info.plist", "Resources/Info.plist"]
+        for plistRel in plistPaths {
+            let plistPath = rootURL.appendingPathComponent(plistRel).path
+            if let content = try? String(contentsOfFile: plistPath, encoding: .utf8) {
+                // XML plist: <key>CFBundleShortVersionString</key>\n<string>1.0.0</string>
+                let pat = try! NSRegularExpression(pattern: "CFBundleShortVersionString</key>\\s*<string>([^<]+)</string>")
+                let r = NSRange(content.startIndex..., in: content)
+                if let m = pat.firstMatch(in: content, range: r), let vr = Range(m.range(at: 1), in: content) {
+                    meta.appVersion = String(content[vr])
+                    meta.appVersionSource = plistRel
+                    return
+                }
+            }
+        }
+    }
+
+    /// Scan for .metal files in the repo
+    private static func scanMetalFiles(rootPath: String, config: CodeContextConfig) -> [(path: String, packageName: String)] {
+        let fm = FileManager.default
+        let rootURL = URL(fileURLWithPath: rootPath).standardizedFileURL
+        let excludeSet = Set(config.excludePaths)
+        var results: [(path: String, packageName: String)] = []
+
+        guard let enumerator = fm.enumerator(at: rootURL, includingPropertiesForKeys: [.isRegularFileKey], options: [.skipsHiddenFiles]) else {
+            return []
+        }
+
+        for case let fileURL as URL in enumerator {
+            let relativePath = fileURL.path.replacingOccurrences(of: rootURL.path + "/", with: "")
+            let components = relativePath.components(separatedBy: "/")
+            if components.contains(where: { excludeSet.contains($0) }) { continue }
+
+            guard fileURL.pathExtension == "metal",
+                  let res = try? fileURL.resourceValues(forKeys: [.isRegularFileKey]),
+                  res.isRegularFile == true else { continue }
+
+            // Detect package from path
+            let pathComponents = fileURL.pathComponents
+            var pkg = ""
+            if let pkgIdx = pathComponents.firstIndex(of: "Packages"), pkgIdx + 1 < pathComponents.count {
+                pkg = pathComponents[pkgIdx + 1]
+            } else if let srcIdx = pathComponents.lastIndex(of: "Sources"), srcIdx > 1 {
+                let moduleRoot = Array(pathComponents[0..<srcIdx])
+                let dirName = moduleRoot.last ?? ""
+                let rootPath = moduleRoot.joined(separator: "/")
+                if ["Package.swift", "BUILD", "BUILD.bazel", "Project.swift"].contains(where: { fm.fileExists(atPath: rootPath + "/" + $0) }) {
+                    pkg = dirName
+                }
+            }
+            // Also check submodules/ pattern
+            if pkg.isEmpty, let subIdx = pathComponents.firstIndex(of: "submodules"), subIdx + 1 < pathComponents.count {
+                pkg = pathComponents[subIdx + 1]
+            }
+            results.append((path: relativePath, packageName: pkg))
+        }
+
+        return results
     }
 
     /// Infer minimum Swift version by scanning source files for version-specific features.

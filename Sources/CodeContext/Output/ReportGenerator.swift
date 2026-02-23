@@ -262,6 +262,9 @@ struct ReportGenerator {
             }
         }
 
+        // Metal files per package (needed in importsHTML closure)
+        let metalPackages = Set(metadata.metalFiles.compactMap { $0.packageName.isEmpty ? nil : $0.packageName })
+
         let importsHTML: String = {
             var sections: [String] = []
 
@@ -274,7 +277,7 @@ struct ReportGenerator {
                 pkgLines[key, default: 0] += file.lineCount
                 pkgDecls[key, default: 0] += file.declarations.filter { $0.kind != .extension }.count
             }
-            let lineThreshold = Double(totalLinesAll) * 0.02
+            let lineThreshold = Double(totalLinesAll) * 0.015
 
             // 1. Local Packages — column grid with clickable links to package sections
             if let localNames = classifiedImports[.local], !localNames.isEmpty {
@@ -296,8 +299,9 @@ struct ReportGenerator {
                     let lines = pkgLines[name, default: 0]
                     let decls = pkgDecls[name, default: 0]
                     let isMajor = Double(lines) >= lineThreshold && lines >= 10_000 && decls >= 80
+                    let metalIcon = metalPackages.contains(name) ? "🔘 " : ""
                     let majorClass = isMajor ? " pkg-major" : ""
-                    tags.append("<a href='#pkg-\(anchor)' class='tag tag-local pkg-link\(majorClass)'><span class='pkg-name'>\(name)</span>\(bsLabel)</a>")
+                    tags.append("<a href='#pkg-\(anchor)' class='tag tag-local pkg-link\(majorClass)'><span class='pkg-name'>\(metalIcon)\(name)</span>\(bsLabel)</a>")
                 }
 
                 let totalWithApp = localNames.count + (hasApp ? 1 : 0)
@@ -441,9 +445,10 @@ struct ReportGenerator {
             let file = fileMap[item.path]
             let fileName = URL(fileURLWithPath: item.path).lastPathComponent
             let pkg = file?.packageName.isEmpty == false ? file!.packageName : "App"
+            let pkgAnchor = pkg.replacingOccurrences(of: " ", with: "-")
             let desc = file?.description ?? ""
             let descHtml = desc.isEmpty ? "" : "<span class='description'>💡 \(esc(String(desc.prefix(100))))</span>"
-            return "<li class='hotspot-item'><div><span>\(esc(fileName))</span> <span class='tag tag-local'>\(esc(pkg))</span>\(descHtml)</div><span class='hotspot-score'>\(String(format: "%.4f", item.score))</span></li>"
+            return "<li class='hotspot-item'><div><span>\(esc(fileName))</span> <a href='#pkg-\(pkgAnchor)' class='tag tag-local pkg-link-inline'>\(esc(pkg))</a>\(descHtml)</div><span class='hotspot-score'>\(String(format: "%.4f", item.score))</span></li>"
         }.joined(separator: "\n")
 
         // ─── 5. Summary ───
@@ -456,6 +461,24 @@ struct ReportGenerator {
         let totalEnums = allDecls.filter { $0.kind == .enum }.count
         let totalProtocols = allDecls.filter { $0.kind == .protocol }.count
         let totalActors = allDecls.filter { $0.kind == .actor }.count
+
+        // TODO/FIXME
+        let totalTodos = parsedFiles.reduce(0) { $0 + $1.todoCount }
+        let totalFixmes = parsedFiles.reduce(0) { $0 + $1.fixmeCount }
+
+        // Module TODO/FIXME stats
+        var moduleTodos: [String: Int] = [:]
+        var moduleFixmes: [String: Int] = [:]
+        for file in parsedFiles {
+            let key = file.packageName.isEmpty ? "App" : file.packageName
+            moduleTodos[key, default: 0] += file.todoCount
+            moduleFixmes[key, default: 0] += file.fixmeCount
+        }
+        let topTodoModules = moduleTodos.sorted { $0.value > $1.value }.prefix(10)
+
+        // Longest functions across all files
+        let allFunctions = parsedFiles.compactMap(\.longestFunction)
+        let topLongestFuncs = allFunctions.sorted { $0.lineCount > $1.lineCount }.prefix(10)
 
         print("   Writing HTML...")
 
@@ -496,6 +519,7 @@ struct ReportGenerator {
                 .pkg-link { display: flex; align-items: center; justify-content: space-between; text-decoration: none; cursor: pointer; transition: background 0.15s; }
                 .pkg-link:hover { background: #bbdefb; }
                 .pkg-major { border: 2px solid var(--accent); font-weight: 600; }
+                .pkg-link-inline { text-decoration: none; cursor: pointer; }
                 .pkg-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
                 .bs-badge-right { background: rgba(0,0,0,0.07); color: var(--text3); font-size: 9px; padding: 1px 5px; border-radius: 4px; margin-left: auto; padding-left: 6px; flex-shrink: 0; font-weight: 400; letter-spacing: 0.02em; }
                 .bs-badge { background: rgba(0,0,0,0.08); color: var(--text3); font-size: 10px; padding: 1px 5px; border-radius: 4px; margin-left: 2px; font-weight: 400; }
@@ -527,7 +551,15 @@ struct ReportGenerator {
                 <div class="summary-grid">
                     \(!metadata.swiftVersion.isEmpty ? "<div class=\"summary-card\"><div class=\"num\" style=\"font-size:20px\">Swift \(esc(metadata.swiftVersion))</div><div class=\"label\">Language</div></div>" : "")
                     \(!metadata.deploymentTargets.isEmpty ? "<div class=\"summary-card\"><div class=\"num\" style=\"font-size:16px\">\(esc(metadata.deploymentTargets.joined(separator: ", ")))</div><div class=\"label\">Min Deployment</div></div>" : "")
+                    \(!metadata.appVersion.isEmpty ? "<div class=\"summary-card\"><div class=\"num\" style=\"font-size:20px\">\(esc(metadata.appVersion))</div><div class=\"label\">App Version</div></div>" : "")
                     <div class="summary-card"><div class="num">\(parsedFiles.count)</div><div class="label">Swift Files</div></div>
+                    \(metadata.metalFiles.count > 0 ? "<div class=\"summary-card\"><div class=\"num\">\(metadata.metalFiles.count)</div><div class=\"label\">🔘 Metal Files</div></div>" : "")
+                    <div class="summary-card"><div class="num">\(totalLines.formatted())</div><div class="label">Lines of Code</div></div>
+                    <div class="summary-card"><div class="num">\(totalDecls)</div><div class="label">Declarations</div></div>
+                    <div class="summary-card"><div class="num">\(totalExts)</div><div class="label">Extensions</div></div>
+                    <div class="summary-card"><div class="num">\(packages.count)</div><div class="label">Packages</div></div>
+                    \(totalTodos + totalFixmes > 0 ? "<div class=\"summary-card\"><div class=\"num\">\(totalTodos + totalFixmes)</div><div class=\"label\">TODO/FIXME</div></div>" : "")
+                    <div class="summary-card"><div class="num">\(totalStructs)</div><div class="label">🟢 Structs</div></div>
                     <div class="summary-card"><div class="num">\(totalLines.formatted())</div><div class="label">Lines of Code</div></div>
                     <div class="summary-card"><div class="num">\(totalDecls)</div><div class="label">Declarations</div></div>
                     <div class="summary-card"><div class="num">\(totalExts)</div><div class="label">Extensions</div></div>
@@ -551,14 +583,43 @@ struct ReportGenerator {
                 \(importsHTML)
             </div>
             <div class="card">
+                <h2>🔥 Knowledge Hotspots</h2>
+                <p class="subtitle">Files with highest <strong>PageRank</strong> score — the most connected and structurally impactful nodes in the dependency graph. High-scoring files are referenced by many other files and sit at critical junctions in the codebase architecture.</p>
+                <ul class="hotspot-list">\(hotspotRows)</ul>
+            </div>
+            \(totalTodos + totalFixmes > 0 ? """
+            <div class="card">
+                <h2>📋 Module Insights</h2>
+                <p class="subtitle">Top modules by TODO / FIXME comment density.</p>
+                <table class="file-table">
+                    <thead><tr><th>Module</th><th>TODO</th><th>FIXME</th><th>Total</th></tr></thead>
+                    <tbody>\(topTodoModules.map { (name, todos) -> String in
+                        let fixmes = moduleFixmes[name] ?? 0
+                        let anchor = name.replacingOccurrences(of: " ", with: "-")
+                        return "<tr><td><a href='#pkg-\(anchor)' class='pkg-link-inline'>\(esc(name))</a></td><td>\(todos)</td><td>\(fixmes)</td><td><strong>\(todos + fixmes)</strong></td></tr>"
+                    }.joined(separator: "\n"))</tbody>
+                </table>
+            </div>
+            """ : "")
+            \(!topLongestFuncs.isEmpty ? """
+            <div class="card">
+                <h2>📏 Longest Functions</h2>
+                <p class="subtitle">Top 10 longest functions by line count — candidates for refactoring.</p>
+                <table class="file-table">
+                    <thead><tr><th>Function</th><th>Lines</th><th>File</th><th>Module</th></tr></thead>
+                    <tbody>\(topLongestFuncs.map { fn -> String in
+                        let fileName = URL(fileURLWithPath: fn.filePath).lastPathComponent
+                        let pkg = fileMap[fn.filePath]?.packageName.isEmpty == false ? fileMap[fn.filePath]!.packageName : "App"
+                        let anchor = pkg.replacingOccurrences(of: " ", with: "-")
+                        return "<tr><td><code>\(esc(fn.name))()</code></td><td class='mono'>\(fn.lineCount)</td><td>\(esc(fileName))</td><td><a href='#pkg-\(anchor)' class='pkg-link-inline'>\(esc(pkg))</a></td></tr>"
+                    }.joined(separator: "\n"))</tbody>
+                </table>
+            </div>
+            """ : "")
+            <div class="card">
                 <h2>📦 Packages & Modules</h2>
                 <p class="subtitle">Graphs: type references between declarations. <span style="color:#007aff">●</span> class <span style="color:#34c759">●</span> struct <span style="color:#ff9500">●</span> enum <span style="color:#ff3b30">●</span> actor. Arrows from class/actor only.</p>
                 \(packageSections)
-            </div>
-            <div class="card">
-                <h2>🔥 Knowledge Hotspots</h2>
-                <p class="subtitle">Files with highest PageRank — most connected and impactful.</p>
-                <ul class="hotspot-list">\(hotspotRows)</ul>
             </div>
             <footer style="text-align:center; padding: 20px 0 10px; color: var(--text3); font-size: 12px;">
                 Generator: <a href="https://github.com/Exey/SwiftCodeContext" style="color: var(--accent); text-decoration: none;">SwiftCodeContext</a> · MIT License · Exey Panteleev

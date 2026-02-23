@@ -62,7 +62,8 @@ final class ObjCParser: LanguageParser, @unchecked Sendable {
             filePath: file.path, moduleName: moduleName, imports: imports,
             description: "", lineCount: content.components(separatedBy: "\n").count,
             declarations: declarations, packageName: packageName,
-            buildSystem: buildSystem
+            buildSystem: buildSystem,
+            todoCount: 0, fixmeCount: 0, longestFunction: nil
         )
     }
 }

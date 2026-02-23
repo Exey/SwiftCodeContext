@@ -32,6 +32,14 @@ enum BuildSystem: String, Codable, Sendable {
     case unknown = "Unknown"
 }
 
+// MARK: - Function Info
+
+struct FunctionInfo: Codable, Sendable {
+    let name: String
+    let lineCount: Int
+    let filePath: String
+}
+
 // MARK: - Parsed File
 
 struct ParsedFile: Codable, Sendable {
@@ -44,11 +52,17 @@ struct ParsedFile: Codable, Sendable {
     let declarations: [Declaration]
 
     /// Package name inferred from directory structure.
-    /// Empty string if file is in the main app target.
     let packageName: String
 
     /// Build system that manages this module.
     let buildSystem: BuildSystem
+
+    /// Count of // TODO comments
+    let todoCount: Int
+    /// Count of // FIXME comments
+    let fixmeCount: Int
+    /// Longest function in this file
+    let longestFunction: FunctionInfo?
 
     var fileName: String {
         URL(fileURLWithPath: filePath).lastPathComponent
