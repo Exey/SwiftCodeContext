@@ -474,11 +474,14 @@ struct ReportGenerator {
             moduleTodos[key, default: 0] += file.todoCount
             moduleFixmes[key, default: 0] += file.fixmeCount
         }
-        let topTodoModules = moduleTodos.sorted { $0.value > $1.value }.prefix(10)
+        let topTodoModules = moduleTodos
+            .filter { $0.value + (moduleFixmes[$0.key] ?? 0) > 0 }
+            .sorted { $0.value + (moduleFixmes[$0.key] ?? 0) > $1.value + (moduleFixmes[$1.key] ?? 0) }
+            .prefix(50)
 
         // Longest functions across all files
         let allFunctions = parsedFiles.compactMap(\.longestFunction)
-        let topLongestFuncs = allFunctions.sorted { $0.lineCount > $1.lineCount }.prefix(10)
+        let topLongestFuncs = allFunctions.sorted { $0.lineCount > $1.lineCount }.prefix(20)
 
         print("   Writing HTML...")
 
@@ -587,10 +590,10 @@ struct ReportGenerator {
                 <p class="subtitle">Files with highest <strong>PageRank</strong> score — the most connected and structurally impactful nodes in the dependency graph. High-scoring files are referenced by many other files and sit at critical junctions in the codebase architecture.</p>
                 <ul class="hotspot-list">\(hotspotRows)</ul>
             </div>
-            \(totalTodos + totalFixmes > 0 ? """
             <div class="card">
                 <h2>📋 Module Insights</h2>
-                <p class="subtitle">Top modules by TODO / FIXME comment density.</p>
+                <p class="subtitle">Modules by TODO / FIXME comment density.</p>
+                \(topTodoModules.isEmpty ? "<p style=\"color: var(--text3)\">No TODO or FIXME comments found across the codebase.</p>" : """
                 <table class="file-table">
                     <thead><tr><th>Module</th><th>TODO</th><th>FIXME</th><th>Total</th></tr></thead>
                     <tbody>\(topTodoModules.map { (name, todos) -> String in
@@ -599,12 +602,11 @@ struct ReportGenerator {
                         return "<tr><td><a href='#pkg-\(anchor)' class='pkg-link-inline'>\(esc(name))</a></td><td>\(todos)</td><td>\(fixmes)</td><td><strong>\(todos + fixmes)</strong></td></tr>"
                     }.joined(separator: "\n"))</tbody>
                 </table>
+                """)
             </div>
-            """ : "")
             \(!topLongestFuncs.isEmpty ? """
             <div class="card">
                 <h2>📏 Longest Functions</h2>
-                <p class="subtitle">Top 10 longest functions by line count — candidates for refactoring.</p>
                 <table class="file-table">
                     <thead><tr><th>Function</th><th>Lines</th><th>File</th><th>Module</th></tr></thead>
                     <tbody>\(topLongestFuncs.map { fn -> String in
