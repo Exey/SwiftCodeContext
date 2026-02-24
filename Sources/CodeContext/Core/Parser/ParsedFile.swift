@@ -21,6 +21,12 @@ struct Declaration: Codable, Sendable {
     enum Kind: String, Codable, Sendable {
         case `class`, `struct`, `enum`, `protocol`, actor, `extension`
     }
+
+    /// Reserved words that cannot be a type name — e.g. "class func" is a static method, not a class named "func".
+    static let invalidNames: Set<String> = [
+        "func", "var", "let", "subscript", "init", "deinit", "typealias", "case",
+        "where", "if", "guard", "switch", "for", "while", "return", "throw", "try",
+    ]
 }
 
 // MARK: - Build System

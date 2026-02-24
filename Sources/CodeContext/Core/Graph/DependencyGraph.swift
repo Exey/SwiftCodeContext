@@ -82,7 +82,7 @@ final class DependencyGraph: @unchecked Sendable {
 
             var typeToFile: [(name: String, path: String)] = []
             for file in cappedFiles {
-                for decl in file.declarations where decl.kind != .extension && decl.name.count >= 4 {
+                for decl in file.declarations where decl.kind != .extension && decl.name.count >= 4 && !Declaration.invalidNames.contains(decl.name) {
                     typeToFile.append((name: decl.name, path: file.filePath))
                 }
             }
