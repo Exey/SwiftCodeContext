@@ -41,10 +41,7 @@ struct PackageSummary {
     let files: [ParsedFile]
     var totalLines: Int { files.reduce(0) { $0 + $1.lineCount } }
 
-    /// Reserved words that regex may capture from "class func", "class var" etc.
-    private static let invalidNames: Set<String> = ["func", "var", "let", "subscript", "init", "deinit", "typealias", "case"]
-
-    var declarations: [Declaration] { files.flatMap(\.declarations).filter { !Self.invalidNames.contains($0.name) } }
+    var declarations: [Declaration] { files.flatMap(\.declarations).filter { !Declaration.invalidNames.contains($0.name) } }
     var realDeclarations: [Declaration] { declarations.filter { $0.kind != .extension } }
     var protocolCount: Int { declarations.filter { $0.kind == .protocol }.count }
     var classCount: Int { declarations.filter { $0.kind == .class }.count }
@@ -364,12 +361,9 @@ struct ReportGenerator {
                 return " <span class='bs-badge'>\(bs.rawValue)</span>"
             }()
 
-            // Reserved words that cannot be real type names (e.g. "class func" produces kind=class, name=func)
-            let invalidNames: Set<String> = ["func", "var", "let", "subscript", "init", "deinit", "typealias", "case"]
-
             let fileRows = sortedFiles.map { file -> String in
-                let decls = file.declarations.filter { $0.kind != .extension && !invalidNames.contains($0.name) }
-                let exts = file.declarations.filter { $0.kind == .extension && !invalidNames.contains($0.name) }
+                let decls = file.declarations.filter { $0.kind != .extension && !Declaration.invalidNames.contains($0.name) }
+                let exts = file.declarations.filter { $0.kind == .extension && !Declaration.invalidNames.contains($0.name) }
                 var parts: [String] = decls.map { "\(kindIcon($0.kind))&thinsp;\(esc($0.name))" }
                 parts += exts.map { "🔹&thinsp;\(esc($0.name))" }
                 let declStr = parts.isEmpty ? "—" : parts.joined(separator: "&ensp;")
@@ -460,8 +454,7 @@ struct ReportGenerator {
 
         // ─── 5. Summary ───
         let totalLines = parsedFiles.reduce(0) { $0 + $1.lineCount }
-        let invalidDeclNames: Set<String> = ["func", "var", "let", "subscript", "init", "deinit", "typealias", "case"]
-        let allDecls = parsedFiles.flatMap(\.declarations).filter { !invalidDeclNames.contains($0.name) }
+        let allDecls = parsedFiles.flatMap(\.declarations).filter { !Declaration.invalidNames.contains($0.name) }
         let totalDecls = allDecls.filter { $0.kind != .extension }.count
         let totalExts = allDecls.filter { $0.kind == .extension }.count
         let totalStructs = allDecls.filter { $0.kind == .struct }.count
@@ -701,7 +694,7 @@ struct ReportGenerator {
         var allDecls: [DeclInfo] = []
 
         for file in eligibleFiles {
-            for decl in file.declarations where graphKinds.contains(decl.kind) && decl.name.count >= 4 {
+            for decl in file.declarations where graphKinds.contains(decl.kind) && decl.name.count >= 4 && !Declaration.invalidNames.contains(decl.name) {
                 allDecls.append(DeclInfo(name: decl.name, kind: decl.kind, filePath: file.filePath, fileName: file.fileName))
             }
         }
