@@ -27,13 +27,15 @@ The generated HTML report includes:
 
 3. **📚 Dependencies & Imports** — comprehensive classification into Apple frameworks, external dependencies, and local Swift packages with interactive tag clouds
 
-4. **🔥 Knowledge Hotspots** — files with the highest PageRank scores, identifying the most connected and architecturally significant code. Each entry includes clickable module badges for quick navigation and inline documentation previews where available
+4. **🎨 Assets** — media resource analysis showing total size, file count by type, and top 3 heaviest files with their individual sizes
 
-5. **📋 Module Insights** — package penetration analysis showing which modules are imported by the most other packages (foundational dependencies), plus quality metrics including top modules by TODO/FIXME density and technical debt indicators
+5. **🔥 Knowledge Hotspots** — files with the highest PageRank scores, identifying the most connected and architecturally significant code. Each entry includes clickable module badges for quick navigation and inline documentation previews where available
 
-6. **📏 Longest Functions** — ranked list of functions with the highest line counts, featuring clickable module badges for context and quick navigation to potential refactoring candidates
+6. **📋 Module Insights** — package penetration analysis showing which modules are imported by the most other packages (foundational dependencies), plus quality metrics including top modules by TODO/FIXME density and technical debt indicators
 
-7. **📦 Packages & Modules** — detailed breakdown of each local Swift package with:
+7. **📏 Longest Functions** — ranked list of functions with the highest line counts, featuring clickable module badges for context and quick navigation to potential refactoring candidates
+
+8. **📦 Packages & Modules** — detailed breakdown of each local Swift package with:
    - Complete file inventory sorted by lines of code
    - Declaration statistics by type (classes, structs, enums, protocols, actors, extensions)
    - Interactive force-directed dependency graph per package, colored by declaration type (🔵 classes, 🟢 structs, 🟡 enums, 🔴 actors)
