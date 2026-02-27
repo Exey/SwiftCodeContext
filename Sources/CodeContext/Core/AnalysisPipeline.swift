@@ -13,6 +13,25 @@ struct ProjectMetadata {
     var appVersionSource: String = ""
     /// Metal shader files: (path, packageName)
     var metalFiles: [(path: String, packageName: String)] = []
+    /// Asset analysis
+    var assets: AssetAnalysis = AssetAnalysis()
+}
+
+/// Asset file info
+struct AssetFileInfo {
+    let relativePath: String
+    let sizeBytes: Int
+    let ext: String
+}
+
+/// Aggregated asset analysis
+struct AssetAnalysis {
+    var totalSizeBytes: Int = 0
+    var countByType: [String: Int] = [:]
+    var sizeByType: [String: Int] = [:]
+    var allFiles: [AssetFileInfo] = []
+    /// Extensions of non-media files >100KB found inside .xcassets
+    var otherHeavyExtensions: Set<String> = []
 }
 
 enum AnalysisPipeline {
@@ -49,6 +68,9 @@ enum AnalysisPipeline {
         // Scan for Metal files
         metadata.metalFiles = scanMetalFiles(rootPath: path, config: config)
 
+        // Scan assets (.xcassets, loose images)
+        metadata.assets = scanAssets(rootPath: path, config: config)
+
         if !metadata.swiftVersion.isEmpty {
             print("   🔧 Swift \(metadata.swiftVersion) (from \(metadata.swiftVersionSource))")
         } else {
@@ -64,6 +86,11 @@ enum AnalysisPipeline {
         }
         if !metadata.metalFiles.isEmpty {
             print("   🔘 Metal shaders: \(metadata.metalFiles.count) files")
+        }
+        if metadata.assets.totalSizeBytes > 0 {
+            let mb = Double(metadata.assets.totalSizeBytes) / 1_048_576.0
+            let types = metadata.assets.countByType.sorted { $0.value > $1.value }.map { "\($0.value) \($0.key)" }.joined(separator: ", ")
+            print("   🎨 Assets: \(String(format: "%.1f", mb)) MB (\(types))")
         }
 
         let cache: CacheManager? = (config.enableCache && useCache) ? CacheManager() : nil
@@ -287,7 +314,58 @@ enum AnalysisPipeline {
         return results
     }
 
-    /// Infer minimum Swift version by scanning source files for version-specific features.
+    /// Scan for asset files (images, audio, video) and compute stats
+    private static func scanAssets(rootPath: String, config: CodeContextConfig) -> AssetAnalysis {
+        let fm = FileManager.default
+        let rootURL = URL(fileURLWithPath: rootPath).standardizedFileURL
+        let excludeSet = Set(config.excludePaths)
+        let assetExtensions: Set<String> = [
+            // Images
+            "png", "jpg", "jpeg", "pdf", "svg", "heic", "webp", "gif", "jxl",
+            // Audio
+            "mp3", "wav", "aac", "m4a", "ogg", "flac", "caf", "aiff",
+            // Video
+            "mp4", "mov", "m4v", "avi", "mkv",
+        ]
+        // Skip these inside .xcassets (metadata, not real assets)
+        let xcassetsIgnore: Set<String> = ["json", ""]
+
+        var analysis = AssetAnalysis()
+        var allFiles: [AssetFileInfo] = []
+
+        guard let enumerator = fm.enumerator(at: rootURL, includingPropertiesForKeys: [.isRegularFileKey, .fileSizeKey], options: [.skipsHiddenFiles]) else {
+            return analysis
+        }
+
+        for case let fileURL as URL in enumerator {
+            let relativePath = fileURL.path.replacingOccurrences(of: rootURL.path + "/", with: "")
+            let components = relativePath.components(separatedBy: "/")
+            if components.contains(where: { excludeSet.contains($0) }) { continue }
+
+            guard let res = try? fileURL.resourceValues(forKeys: [.isRegularFileKey, .fileSizeKey]),
+                  res.isRegularFile == true else { continue }
+
+            let ext = fileURL.pathExtension.lowercased()
+            let size = res.fileSize ?? 0
+
+            if assetExtensions.contains(ext) {
+                let info = AssetFileInfo(relativePath: relativePath, sizeBytes: size, ext: ext)
+                allFiles.append(info)
+                analysis.totalSizeBytes += size
+                analysis.countByType[ext, default: 0] += 1
+                analysis.sizeByType[ext, default: 0] += size
+            } else if size > 102_400 && !xcassetsIgnore.contains(ext) {
+                // Detect other heavy files inside .xcassets folders
+                let inXcassets = components.contains(where: { $0.hasSuffix(".xcassets") })
+                if inXcassets && !ext.isEmpty {
+                    analysis.otherHeavyExtensions.insert(ext)
+                }
+            }
+        }
+
+        analysis.allFiles = allFiles
+        return analysis
+    }
     /// Scans up to 200 .swift files to keep it fast.
     private static func inferSwiftVersionFromCode(rootPath: String) -> String {
         let fm = FileManager.default

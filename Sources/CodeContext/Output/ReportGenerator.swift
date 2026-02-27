@@ -587,7 +587,6 @@ struct ReportGenerator {
                     \(!metadata.deploymentTargets.isEmpty ? "<div class=\"summary-card\"><div class=\"num\" style=\"font-size:16px\">\(esc(metadata.deploymentTargets.joined(separator: ", ")))</div><div class=\"label\">Min Deployment</div></div>" : "")
                     \(!metadata.appVersion.isEmpty ? "<div class=\"summary-card\"><div class=\"num\" style=\"font-size:20px\">\(esc(metadata.appVersion))</div><div class=\"label\">App Version</div></div>" : "")
                     <div class="summary-card"><div class="num">\(parsedFiles.count)</div><div class="label">Swift Files</div></div>
-                    \(metadata.metalFiles.count > 0 ? "<div class=\"summary-card\"><div class=\"num\">\(metadata.metalFiles.count)</div><div class=\"label\">🔘 Metal Files</div></div>" : "")
                     <div class="summary-card"><div class="num">\(totalLines.formatted())</div><div class="label">Lines of Code</div></div>
                     <div class="summary-card"><div class="num">\(totalDecls)</div><div class="label">Declarations</div></div>
                     <div class="summary-card"><div class="num">\(totalExts)</div><div class="label">Extensions</div></div>
@@ -598,6 +597,7 @@ struct ReportGenerator {
                     <div class="summary-card"><div class="num">\(totalEnums)</div><div class="label">🟡 Enums</div></div>
                     <div class="summary-card"><div class="num">\(totalProtocols)</div><div class="label">🟣 Protocols</div></div>
                     <div class="summary-card"><div class="num">\(totalActors)</div><div class="label">🔴 Actors</div></div>
+                    \(metadata.metalFiles.count > 0 ? "<div class=\"summary-card\"><div class=\"num\">\(metadata.metalFiles.count)</div><div class=\"label\">🔘 Metal</div></div>" : "")
                 </div>
             </div>
             <div class="card">
@@ -611,6 +611,57 @@ struct ReportGenerator {
                 <h2>📚 Dependencies & Imports</h2>
                 \(importsHTML)
             </div>
+            \(metadata.assets.totalSizeBytes > 0 ? {
+                let a = metadata.assets
+                let totalMB = String(format: "%.1f", Double(a.totalSizeBytes) / 1_048_576.0)
+                let imageExts: Set<String> = ["png", "jpg", "jpeg", "pdf", "svg", "heic", "webp", "gif", "jxl"]
+                let audioExts: Set<String> = ["mp3", "wav", "aac", "m4a", "ogg", "flac", "caf", "aiff"]
+                // videoExts: everything else
+                func typeEmoji(_ ext: String) -> String {
+                    if imageExts.contains(ext) { return "🖼️" }
+                    if audioExts.contains(ext) { return "🎧" }
+                    return "📺"
+                }
+                // Group files by type, sorted by size desc
+                var filesByType: [String: [AssetFileInfo]] = [:]
+                for f in a.allFiles { filesByType[f.ext, default: []].append(f) }
+                for key in filesByType.keys { filesByType[key]?.sort { $0.sizeBytes > $1.sizeBytes } }
+                let sortedTypes = a.countByType.keys.sorted { (a.sizeByType[$0] ?? 0) > (a.sizeByType[$1] ?? 0) }
+                let typeRows = sortedTypes.map { ext -> String in
+                    let count = a.countByType[ext] ?? 0
+                    let sizeBytes = a.sizeByType[ext] ?? 0
+                    let sizeMB = String(format: "%.1f", Double(sizeBytes) / 1_048_576.0)
+                    let top3 = (filesByType[ext] ?? []).prefix(3)
+                    let heaviestHTML: String
+                    if top3.isEmpty {
+                        heaviestHTML = "—"
+                    } else {
+                        heaviestHTML = top3.map { f in
+                            let sz = self.formatFileSize(f.sizeBytes)
+                            return "<div style='margin:2px 0'><span class='bs-badge-right' style='margin-left:0;margin-right:6px'>\(sz)</span><span style='font-size:12px'>\(esc(f.relativePath))</span></div>"
+                        }.joined()
+                    }
+                    let emoji = typeEmoji(ext)
+                    return "<tr><td>\(emoji) <strong>.\(esc(ext))</strong></td><td class='mono'>\(count)</td><td class='mono'>\(sizeMB) MB</td><td>\(heaviestHTML)</td></tr>"
+                }.joined(separator: "\n")
+                let otherHTML: String
+                if !a.otherHeavyExtensions.isEmpty {
+                    let exts = a.otherHeavyExtensions.sorted().map { "📄 .\($0)" }.joined(separator: "&ensp;")
+                    otherHTML = "<p style='margin-top:12px;color:var(--text3);font-size:13px'>Detected other heavy files in .xcassets: \(exts)</p>"
+                } else {
+                    otherHTML = ""
+                }
+                return """
+            <div class="card">
+                <h2>🎨 Assets — \(totalMB) MB</h2>
+                <div class="table-wrap"><table class="file-table">
+                    <thead><tr><th>Type</th><th>Files</th><th>Size</th><th>Top-3 Heaviest Files</th></tr></thead>
+                    <tbody>\(typeRows)</tbody>
+                </table></div>
+                \(otherHTML)
+            </div>
+            """
+            }() : "")
             <div class="card">
                 <h2>🔥 Knowledge Hotspots</h2>
                 <p class="subtitle">Files with highest <strong>PageRank</strong> score — the most connected and structurally impactful nodes in the dependency graph. High-scoring files are referenced by many other files and sit at critical junctions in the codebase architecture.</p>
@@ -757,6 +808,16 @@ struct ReportGenerator {
     private func esc(_ s: String) -> String {
         s.replacingOccurrences(of: "&", with: "&amp;").replacingOccurrences(of: "<", with: "&lt;")
          .replacingOccurrences(of: ">", with: "&gt;").replacingOccurrences(of: "\"", with: "&quot;")
+    }
+
+    private func formatFileSize(_ bytes: Int) -> String {
+        if bytes >= 1_048_576 {
+            return String(format: "%.1f MB", Double(bytes) / 1_048_576.0)
+        } else if bytes >= 1024 {
+            return String(format: "%.0f KB", Double(bytes) / 1024.0)
+        } else {
+            return "\(bytes) B"
+        }
     }
 }
 
