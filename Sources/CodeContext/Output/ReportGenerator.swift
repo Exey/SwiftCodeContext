@@ -586,6 +586,7 @@ struct ReportGenerator {
                     \(!metadata.swiftVersion.isEmpty ? "<div class=\"summary-card\"><div class=\"num\" style=\"font-size:20px\">Swift \(esc(metadata.swiftVersion))</div><div class=\"label\">Language</div></div>" : "")
                     \(!metadata.deploymentTargets.isEmpty ? "<div class=\"summary-card\"><div class=\"num\" style=\"font-size:16px\">\(esc(metadata.deploymentTargets.joined(separator: ", ")))</div><div class=\"label\">Min Deployment</div></div>" : "")
                     \(!metadata.appVersion.isEmpty ? "<div class=\"summary-card\"><div class=\"num\" style=\"font-size:20px\">\(esc(metadata.appVersion))</div><div class=\"label\">App Version</div></div>" : "")
+                    \(metadata.assets.totalSizeBytes > 0 ? "<div class=\"summary-card\"><div class=\"num\" style=\"font-size:18px\">\(metadata.assets.allFiles.count) <span style=\"font-size:14px;font-weight:400;color:var(--text3)\">(\(String(format: "%.1f", Double(metadata.assets.totalSizeBytes) / 1_048_576.0)) MB)</span></div><div class=\"label\">Assets</div></div>" : "")
                     <div class="summary-card"><div class="num">\(parsedFiles.count)</div><div class="label">Swift Files</div></div>
                     <div class="summary-card"><div class="num">\(totalLines.formatted())</div><div class="label">Lines of Code</div></div>
                     <div class="summary-card"><div class="num">\(totalDecls)</div><div class="label">Declarations</div></div>
