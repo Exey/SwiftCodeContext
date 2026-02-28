@@ -601,6 +601,7 @@ struct ReportGenerator {
                     \(metadata.metalFiles.count > 0 ? "<div class=\"summary-card\"><div class=\"num\">\(metadata.metalFiles.count)</div><div class=\"label\">🔘 Metal</div></div>" : "")
                 </div>
             </div>
+            \(!teamRows.isEmpty ? """
             <div class="card">
                 <h2>👥 Team Contribution Map</h2>
                 <div class="table-wrap"><table class="team-table">
@@ -608,6 +609,7 @@ struct ReportGenerator {
                     <tbody>\(teamRows)</tbody>
                 </table></div>
             </div>
+            """ : "")
             <div class="card">
                 <h2>📚 Dependencies & Imports</h2>
                 \(importsHTML)
