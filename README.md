@@ -10,11 +10,16 @@ Built 100% in Swift using Apple-native technologies
 
 ```bash
 cd SwiftCodeContext
+
+# Projects under 200K lines — just run directly
+swift run codecontext analyze ~/path/to/your/project --open
+
+# Large projects (200K+ lines) — release build is 5-10× faster
 swift build -c release
 .build/release/codecontext analyze ~/path/to/your/project --open
 ```
 
-Release build runs ~5-10× faster than debug. `--open` opens the HTML report in Safari.
+`--open` opens the HTML report in Safari.
 
 ![Based on https://github.com/TelegramMessenger/Telegram-iOS](https://i.postimg.cc/BqgK0jPr/tg.png)
 
