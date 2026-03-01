@@ -1,4 +1,4 @@
-# 🔍 SwiftCodeContext
+# 🔬 SwiftCodeContext
 
 **Native macOS CLI tool for Swift codebase intelligence** — find critical files, generate dependency graphs, learning paths, and AI-powered insights.
 
