@@ -162,6 +162,10 @@ final class SwiftParser: LanguageParser, @unchecked Sendable {
             moduleName = pathComponents[sourcesIdx + 1]
         }
         let (packageName, buildSystem) = detectModule(for: file, pathComponents: pathComponents)
+        // Use packageName as moduleName fallback (e.g. ObjC umbrella header packages)
+        if moduleName.isEmpty && !packageName.isEmpty {
+            moduleName = packageName
+        }
 
         return ParsedFile(
             filePath: file.path, moduleName: moduleName, imports: imports,
@@ -216,6 +220,50 @@ final class SwiftParser: LanguageParser, @unchecked Sendable {
         Self.moduleCache[moduleRootPath] = result
         Self.moduleCacheLock.unlock()
 
-        return result
+        if !result.0.isEmpty {
+            return result
+        }
+
+        // Fallback: ObjC-style umbrella header detection
+        // e.g. root/BlahBlahSDK/BlahBlahSDK.h → packageName = "BlahBlahSDK"
+        return detectUmbrellaHeaderPackage(for: file)
+    }
+
+    /// Detect ObjC-style packages by umbrella header (FolderName/FolderName.h).
+    private func detectUmbrellaHeaderPackage(for file: URL) -> (String, BuildSystem) {
+        let fm = FileManager.default
+        var dir = file.deletingLastPathComponent()
+
+        for _ in 0..<5 {
+            let dirName = dir.lastPathComponent
+            guard dirName != "/" && !dirName.isEmpty else { break }
+
+            let cacheKey = dir.path
+            Self.moduleCacheLock.lock()
+            if let cached = Self.moduleCache[cacheKey] {
+                Self.moduleCacheLock.unlock()
+                return cached
+            }
+            Self.moduleCacheLock.unlock()
+
+            // Stop at project root markers
+            if fm.fileExists(atPath: dir.appendingPathComponent(".git").path) ||
+               fm.fileExists(atPath: dir.appendingPathComponent("Package.swift").path) {
+                break
+            }
+
+            let umbrellaHeader = dir.appendingPathComponent("\(dirName).h")
+            if fm.fileExists(atPath: umbrellaHeader.path) {
+                let result = (dirName, BuildSystem.unknown)
+                Self.moduleCacheLock.lock()
+                Self.moduleCache[cacheKey] = result
+                Self.moduleCacheLock.unlock()
+                return result
+            }
+
+            dir = dir.deletingLastPathComponent()
+        }
+
+        return ("", .unknown)
     }
 }

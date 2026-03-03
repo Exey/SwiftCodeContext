@@ -52,10 +52,32 @@ final class ObjCParser: LanguageParser, @unchecked Sendable {
             }
         }
 
+        // Fallback: ObjC umbrella header detection (FolderName/FolderName.h)
+        if packageName.isEmpty {
+            let fm = FileManager.default
+            var dir = file.deletingLastPathComponent()
+            for _ in 0..<5 {
+                let dirName = dir.lastPathComponent
+                guard dirName != "/" && !dirName.isEmpty else { break }
+                if fm.fileExists(atPath: dir.appendingPathComponent(".git").path) ||
+                   fm.fileExists(atPath: dir.appendingPathComponent("Package.swift").path) {
+                    break
+                }
+                if fm.fileExists(atPath: dir.appendingPathComponent("\(dirName).h").path) {
+                    packageName = dirName
+                    break
+                }
+                dir = dir.deletingLastPathComponent()
+            }
+        }
+
         var moduleName = ""
         if let sourcesIdx = pathComponents.lastIndex(of: "Sources"),
            sourcesIdx + 1 < pathComponents.count {
             moduleName = pathComponents[sourcesIdx + 1]
+        }
+        if moduleName.isEmpty && !packageName.isEmpty {
+            moduleName = packageName
         }
 
         return ParsedFile(
