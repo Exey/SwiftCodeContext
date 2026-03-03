@@ -18,6 +18,10 @@ struct CodeContextConfig: Codable {
     var rateLimit: RateLimitConfig = RateLimitConfig()
     /// File extensions to analyze (Swift-first, but extensible)
     var fileExtensions: [String] = ["swift"]
+    /// Auto-detect mixed ObjC/Swift projects and include .h/.m/.mm
+    var autoDetectObjC: Bool = true
+    /// Log subproject/package detection details (umbrella headers, framework paths, SPM)
+    var debugSubproject: Bool = false
 }
 
 struct AIConfig: Codable {
@@ -31,6 +35,13 @@ struct RateLimitConfig: Codable {
     var enabled: Bool = true
     var requestsPerMinute: Int = 60
     var requestsPerHour: Int = 1000
+}
+
+// MARK: - Debug Flags (resolved: config JSON || CLI override)
+
+enum DebugFlags {
+    /// Set once at startup from config + CLI flag
+    static var debugSubproject = false
 }
 
 // MARK: - Config Loader

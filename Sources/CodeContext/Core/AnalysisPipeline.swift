@@ -15,6 +15,10 @@ struct ProjectMetadata {
     var metalFiles: [(path: String, packageName: String)] = []
     /// Asset analysis
     var assets: AssetAnalysis = AssetAnalysis()
+    /// Relative path to the ObjC bridging header, if detected
+    var bridgingHeaderPath: String = ""
+    /// Whether this is a mixed ObjC/Swift project
+    var isMixedObjCSwift: Bool = false
 }
 
 /// Asset file info
@@ -51,19 +55,34 @@ enum AnalysisPipeline {
         useCache: Bool = true,
         verbose: Bool = false
     ) async throws -> Result {
-        let scanner = RepositoryScanner(config: config)
+        // Auto-detect mixed ObjC/Swift project before scanning
+        var effectiveConfig = config
+        var detectedBridgingHeader = ""
+        if config.autoDetectObjC && config.fileExtensions == ["swift"] {
+            let (hasObjC, bh) = detectMixedProject(rootPath: path, config: config)
+            if hasObjC || !bh.isEmpty {
+                effectiveConfig.fileExtensions = ["swift", "h", "m", "mm"]
+                detectedBridgingHeader = bh
+            }
+        }
+
+        let scanner = RepositoryScanner(config: effectiveConfig)
         let files = try scanner.scan(rootPath: path)
 
         guard !files.isEmpty else {
             throw CodeContextError.analysis("No source files found.")
         }
-        if files.count > config.maxFilesAnalyze {
-            throw CodeContextError.analysis("Too many files (\(files.count)). Limit: \(config.maxFilesAnalyze)")
+        if files.count > effectiveConfig.maxFilesAnalyze {
+            throw CodeContextError.analysis("Too many files (\(files.count)). Limit: \(effectiveConfig.maxFilesAnalyze)")
         }
         print("   Found \(files.count) files")
 
         // Detect project metadata
         var metadata = detectProjectMetadata(rootPath: path)
+        if !detectedBridgingHeader.isEmpty || effectiveConfig.fileExtensions != config.fileExtensions {
+            metadata.isMixedObjCSwift = true
+            metadata.bridgingHeaderPath = detectedBridgingHeader
+        }
 
         // Scan for Metal files
         metadata.metalFiles = scanMetalFiles(rootPath: path, config: config)
@@ -92,6 +111,12 @@ enum AnalysisPipeline {
             let types = metadata.assets.countByType.sorted { $0.value > $1.value }.map { "\($0.value) \($0.key)" }.joined(separator: ", ")
             print("   🎨 Assets: \(String(format: "%.1f", mb)) MB (\(types))")
         }
+        if metadata.isMixedObjCSwift {
+            print("   🔀 Mixed ObjC/Swift project detected")
+            if !metadata.bridgingHeaderPath.isEmpty {
+                print("   🌉 Bridging header: \(metadata.bridgingHeaderPath)")
+            }
+        }
 
         let cache: CacheManager? = (config.enableCache && useCache) ? CacheManager() : nil
         let parser = ParallelParser(cache: cache)
@@ -112,7 +137,7 @@ enum AnalysisPipeline {
 
         print("🕸️  Building dependency graph...")
         let graph = DependencyGraph()
-        graph.build(from: enrichedFiles)
+        graph.build(from: enrichedFiles, bridgingHeaderPath: metadata.bridgingHeaderPath)
         graph.analyze()
 
         var mergedStats = globalAuthorStats
@@ -126,6 +151,65 @@ enum AnalysisPipeline {
             graph: graph, parsedFiles: parsedFiles, enrichedFiles: enrichedFiles,
             branchName: branchName, authorStats: mergedStats, metadata: metadata
         )
+    }
+
+    // MARK: - Mixed ObjC/Swift Detection
+
+    /// Lightweight pre-scan: check for ObjC files and bridging header in .pbxproj
+    private static func detectMixedProject(rootPath: String, config: CodeContextConfig) -> (hasObjC: Bool, bridgingHeader: String) {
+        let fm = FileManager.default
+        let rootURL = URL(fileURLWithPath: rootPath).standardizedFileURL
+        let excludeSet = Set(config.excludePaths)
+
+        // Check for bridging header in .pbxproj
+        var bridgingHeader = ""
+        if let items = try? fm.contentsOfDirectory(atPath: rootURL.path) {
+            for item in items where item.hasSuffix(".xcodeproj") {
+                let pbxPath = rootURL.appendingPathComponent(item)
+                    .appendingPathComponent("project.pbxproj").path
+                if let content = try? String(contentsOfFile: pbxPath, encoding: .utf8) {
+                    let pat = try! NSRegularExpression(
+                        pattern: #"SWIFT_OBJC_BRIDGING_HEADER\s*=\s*"?([^";]+)"?"#
+                    )
+                    let r = NSRange(content.startIndex..., in: content)
+                    if let m = pat.firstMatch(in: content, range: r),
+                       let vr = Range(m.range(at: 1), in: content) {
+                        bridgingHeader = String(content[vr])
+                            .trimmingCharacters(in: .whitespaces)
+                            .replacingOccurrences(of: "$(SRCROOT)/", with: "")
+                            .replacingOccurrences(of: "$(PROJECT_DIR)/", with: "")
+                    }
+                }
+                break
+            }
+        }
+
+        // Quick check: any .h or .m files exist?
+        var hasObjC = false
+        if let enumerator = fm.enumerator(
+            at: rootURL,
+            includingPropertiesForKeys: [.isRegularFileKey],
+            options: [.skipsHiddenFiles]
+        ) {
+            for case let fileURL as URL in enumerator {
+                let rel = fileURL.path.replacingOccurrences(of: rootURL.path + "/", with: "")
+                let components = rel.components(separatedBy: "/")
+                if components.contains(where: { excludeSet.contains($0) }) {
+                    if let rv = try? fileURL.resourceValues(forKeys: [.isDirectoryKey]),
+                       rv.isDirectory == true {
+                        enumerator.skipDescendants()
+                    }
+                    continue
+                }
+                let ext = fileURL.pathExtension.lowercased()
+                if ext == "m" || ext == "mm" {
+                    hasObjC = true
+                    break
+                }
+            }
+        }
+
+        return (hasObjC, bridgingHeader)
     }
 
     // MARK: - Project Metadata Detection

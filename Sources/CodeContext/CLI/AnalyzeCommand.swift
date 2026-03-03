@@ -25,10 +25,14 @@ struct AnalyzeCommand: AsyncParsableCommand {
     @Flag(name: .long, help: "Open report in browser after generation")
     var open: Bool = false
 
+    @Flag(name: .long, help: "Log subproject/package detection details")
+    var debugSubproject: Bool = false
+
     func run() async throws {
         print("🚀 Starting SwiftCodeContext analysis for: \(path)")
 
         let config = ConfigLoader.load()
+        DebugFlags.debugSubproject = debugSubproject || config.debugSubproject
 
         if clearCache {
             await CacheManager().clear()

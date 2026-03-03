@@ -15,7 +15,7 @@ final class DependencyGraph: @unchecked Sendable {
 
     // MARK: - Build
 
-    func build(from parsedFiles: [ParsedFile]) {
+    func build(from parsedFiles: [ParsedFile], bridgingHeaderPath: String = "") {
         let startTime = CFAbsoluteTimeGetCurrent()
         var nameToPath: [String: String] = [:]
 
@@ -48,6 +48,16 @@ final class DependencyGraph: @unchecked Sendable {
         let typeRefEdges = edges.count - importEdges
         let t2 = CFAbsoluteTimeGetCurrent() - startTime
         print("   Type-reference edges: \(typeRefEdges) (\(String(format: "%.1f", t2))s)")
+
+        // ObjC/Swift interop edges via bridging header
+        if !bridgingHeaderPath.isEmpty {
+            let preInterop = edges.count
+            buildInteropEdges(from: parsedFiles, bridgingHeaderPath: bridgingHeaderPath)
+            let interopEdges = edges.count - preInterop
+            if interopEdges > 0 {
+                print("   Interop edges: \(interopEdges) (bridging header hub)")
+            }
+        }
 
         detectCycles()
 
@@ -84,9 +94,7 @@ final class DependencyGraph: @unchecked Sendable {
             } else {
                 cappedFiles = packageFiles
             }
-            if packageFiles.count > 20 {
-                print("   [\(pkgIdx+1)/\(totalPackages)] \(displayName): \(packageFiles.count) files")
-            }
+            print("   [\(pkgIdx+1)/\(totalPackages)] \(displayName): \(packageFiles.count) files")
 
             var typeToFile: [(name: String, path: String)] = []
             for file in cappedFiles {
@@ -114,6 +122,53 @@ final class DependencyGraph: @unchecked Sendable {
 
         // Release cache
         contentCache.removeAll()
+    }
+
+    /// Build edges for Swift↔ObjC interop via bridging header and -Swift.h imports.
+    private func buildInteropEdges(from parsedFiles: [ParsedFile], bridgingHeaderPath: String) {
+        // Find the bridging header in parsed files
+        let bridgingFile = parsedFiles.first { file in
+            file.filePath.hasSuffix(bridgingHeaderPath) ||
+            file.fileName == (bridgingHeaderPath.components(separatedBy: "/").last ?? bridgingHeaderPath)
+        }
+
+        guard let bridgingFile = bridgingFile else {
+            print("   ⚠️  Bridging header not found in scanned files: \(bridgingHeaderPath)")
+            return
+        }
+
+        // Build lookup from file name → path
+        let nameToPath: [String: String] = Dictionary(
+            parsedFiles.map { ($0.fileName, $0.filePath) },
+            uniquingKeysWith: { first, _ in first }
+        )
+        let nameNoExtToPath: [String: String] = Dictionary(
+            parsedFiles.map { ($0.fileNameWithoutExtension, $0.filePath) },
+            uniquingKeysWith: { first, _ in first }
+        )
+
+        // 1. Bridging header → ObjC headers it imports
+        for importName in bridgingFile.imports {
+            let baseName = importName.components(separatedBy: "/").last ?? importName
+            let nameOnly = baseName.replacingOccurrences(of: ".h", with: "")
+            if let targetPath = nameToPath[baseName] ?? nameNoExtToPath[nameOnly] {
+                addEdge(from: bridgingFile.filePath, to: targetPath)
+            }
+        }
+
+        // 2. All Swift files → bridging header (implicit dependency)
+        for file in parsedFiles where file.filePath.hasSuffix(".swift") {
+            addEdge(from: file.filePath, to: bridgingFile.filePath)
+        }
+
+        // 3. ObjC .m/.mm files importing *-Swift.h → bridging header as proxy hub
+        for file in parsedFiles {
+            let ext = URL(fileURLWithPath: file.filePath).pathExtension.lowercased()
+            guard ext == "m" || ext == "mm" else { continue }
+            if file.imports.contains(where: { $0.hasSuffix("-Swift.h") }) {
+                addEdge(from: file.filePath, to: bridgingFile.filePath)
+            }
+        }
     }
 
     /// Fast type-name check using String.range (no regex compilation overhead).

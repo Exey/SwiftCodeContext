@@ -239,6 +239,8 @@ struct ReportGenerator {
         let allImports = Set(parsedFiles.flatMap(\.imports))
         let localPackageNames = Set(parsedFiles.compactMap { $0.packageName.isEmpty ? nil : $0.packageName })
         let localModuleNames = Set(parsedFiles.filter { !$0.packageName.isEmpty }.map(\.moduleName)).union(localPackageNames)
+        // ObjC file-level imports (#import "Foo.h") resolve to class names that match scanned filenames
+        let localFileNames = Set(parsedFiles.map(\.fileNameWithoutExtension))
         var classifiedImports: [ImportKind: Set<String>] = [.apple: [], .external: [], .local: []]
         var detectedPrivateFrameworks: Set<String> = []
         for imp in allImports {
@@ -247,6 +249,10 @@ struct ReportGenerator {
                 classifiedImports[.apple, default: []].insert(imp)
             } else if localModuleNames.contains(imp) || localPackageNames.contains(imp) {
                 classifiedImports[.local, default: []].insert(imp)
+            } else if localFileNames.contains(imp) {
+                // ObjC header-level import matching a scanned file — skip from imports display
+                // (it's an internal file cross-reference, not a module dependency)
+                continue
             } else {
                 // Check if it's a known private framework
                 if privateFrameworks.contains(baseName) {

@@ -53,6 +53,9 @@ final class SwiftParser: LanguageParser, @unchecked Sendable {
         var braceDepth = 0
         var inFunc = false
 
+        // Scope depth for filtering nested declarations (enum CodingKeys inside extensions, etc.)
+        var scopeDepth = 0
+
         // Single-pass line scan (like Go version — no regex on hot path)
         content.enumerateLines { line, _ in
             lineCount += 1
@@ -99,7 +102,9 @@ final class SwiftParser: LanguageParser, @unchecked Sendable {
                 if declLine.hasPrefix(kw) {
                     let rest = declLine.dropFirst(kw.count)
                     let name = String(rest.prefix(while: { $0.isLetter || $0.isNumber || $0 == "_" || $0 == "." }))
-                    if !name.isEmpty && !Declaration.invalidNames.contains(name) {
+                    // Only register top-level declarations (scopeDepth == 0)
+                    // Skips nested types like enum CodingKeys inside extensions
+                    if !name.isEmpty && !Declaration.invalidNames.contains(name) && scopeDepth == 0 {
                         declarations.append(Declaration(name: name, kind: kind))
                         if description.isEmpty && !docLines.isEmpty {
                             description = docLines.joined(separator: " ")
@@ -107,6 +112,15 @@ final class SwiftParser: LanguageParser, @unchecked Sendable {
                     }
                     break
                 }
+            }
+
+            // Update scope depth (track braces for nested declaration filtering)
+            if !trimmed.hasPrefix("//") {
+                for ch in trimmed {
+                    if ch == "{" { scopeDepth += 1 }
+                    else if ch == "}" { scopeDepth -= 1 }
+                }
+                if scopeDepth < 0 { scopeDepth = 0 }
             }
 
             // Function tracking (for longest function detection)
@@ -162,6 +176,10 @@ final class SwiftParser: LanguageParser, @unchecked Sendable {
             moduleName = pathComponents[sourcesIdx + 1]
         }
         let (packageName, buildSystem) = detectModule(for: file, pathComponents: pathComponents)
+        // Use packageName as moduleName fallback (e.g. ObjC umbrella header packages)
+        if moduleName.isEmpty && !packageName.isEmpty {
+            moduleName = packageName
+        }
 
         return ParsedFile(
             filePath: file.path, moduleName: moduleName, imports: imports,
@@ -177,6 +195,14 @@ final class SwiftParser: LanguageParser, @unchecked Sendable {
 
     /// Detects module name and build system.
     private func detectModule(for file: URL, pathComponents: [String]) -> (String, BuildSystem) {
+        // Binary framework detection: .xcframework or .framework in path
+        if let fwComp = pathComponents.first(where: { $0.hasSuffix(".xcframework") }) {
+            return (String(fwComp.dropLast(".xcframework".count)), .unknown)
+        }
+        if let fwComp = pathComponents.first(where: { $0.hasSuffix(".framework") }) {
+            return (String(fwComp.dropLast(".framework".count)), .unknown)
+        }
+
         // Fast path: Packages/ directory → SPM
         if let pkgIdx = pathComponents.firstIndex(of: "Packages"),
            pkgIdx + 1 < pathComponents.count {
@@ -184,7 +210,7 @@ final class SwiftParser: LanguageParser, @unchecked Sendable {
         }
 
         guard let sourcesIdx = pathComponents.lastIndex(of: "Sources"), sourcesIdx > 1 else {
-            return ("", .unknown)
+            return detectUmbrellaHeaderPackage(for: file)
         }
 
         let moduleRootComponents = Array(pathComponents[0..<sourcesIdx])
@@ -216,6 +242,61 @@ final class SwiftParser: LanguageParser, @unchecked Sendable {
         Self.moduleCache[moduleRootPath] = result
         Self.moduleCacheLock.unlock()
 
-        return result
+        if !result.0.isEmpty {
+            return result
+        }
+
+        // Fallback: ObjC-style umbrella header detection
+        // e.g. root/BlahBlahSDK/BlahBlahSDK.h → packageName = "BlahBlahSDK"
+        return detectUmbrellaHeaderPackage(for: file)
+    }
+
+    /// Detect ObjC-style packages by umbrella header (FolderName/FolderName.h).
+    private func detectUmbrellaHeaderPackage(for file: URL) -> (String, BuildSystem) {
+        if DebugFlags.debugSubproject { print("   🔎 [Swift] umbrella search for: \(file.lastPathComponent)") }
+        let fm = FileManager.default
+        var dir = file.deletingLastPathComponent()
+
+        for i in 0..<10 {
+            let dirName = dir.lastPathComponent
+            guard dirName != "/" && !dirName.isEmpty else {
+                if DebugFlags.debugSubproject { print("   🔎 [Swift]   iter \(i): hit root (\(dirName)), stopping") }
+                break
+            }
+
+            let cacheKey = dir.path
+            Self.moduleCacheLock.lock()
+            if let cached = Self.moduleCache[cacheKey] {
+                Self.moduleCacheLock.unlock()
+                if DebugFlags.debugSubproject { print("   🔎 [Swift]   iter \(i): '\(dirName)' → CACHED: '\(cached.0)'") }
+                return cached
+            }
+            Self.moduleCacheLock.unlock()
+
+            // Stop at project root markers
+            let dirPath = dir.path
+            let hasGit = fm.fileExists(atPath: dirPath + "/.git")
+            let hasPkgSwift = fm.fileExists(atPath: dirPath + "/Package.swift")
+            let hasXcodeproj = (try? fm.contentsOfDirectory(atPath: dirPath))?.contains(where: { $0.hasSuffix(".xcodeproj") }) == true
+            if hasGit || hasPkgSwift || hasXcodeproj {
+                if DebugFlags.debugSubproject { print("   🔎 [Swift]   iter \(i): '\(dirName)' → STOP (git=\(hasGit) pkg=\(hasPkgSwift) xcodeproj=\(hasXcodeproj))") }
+                break
+            }
+
+            let umbrellaHeader = dirPath + "/\(dirName).h"
+            let headerExists = fm.fileExists(atPath: umbrellaHeader)
+            if DebugFlags.debugSubproject { print("   🔎 [Swift]   iter \(i): '\(dirName)' → \(dirName).h exists=\(headerExists)") }
+            if headerExists {
+                let result = (dirName, BuildSystem.unknown)
+                Self.moduleCacheLock.lock()
+                Self.moduleCache[cacheKey] = result
+                Self.moduleCacheLock.unlock()
+                return result
+            }
+
+            dir = dir.deletingLastPathComponent()
+        }
+
+        return ("", .unknown)
     }
 }
