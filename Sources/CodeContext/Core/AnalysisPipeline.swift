@@ -133,18 +133,17 @@ enum AnalysisPipeline {
         let gitAnalyzer = GitAnalyzer(repoPath: repoAbsPath, commitLimit: config.gitCommitLimit)
         let branchName = gitAnalyzer.currentBranch()
         let globalAuthorStats = gitAnalyzer.authorStats()
-        let enrichedFiles = gitAnalyzer.analyze(files: parsedFiles)
+        let (enrichedFiles, authorFileCounts) = gitAnalyzer.analyze(files: parsedFiles)
 
         print("🕸️  Building dependency graph...")
         let graph = DependencyGraph()
         graph.build(from: enrichedFiles, bridgingHeaderPath: metadata.bridgingHeaderPath)
         graph.analyze()
 
+        // Merge: commit counts from globalAuthorStats + accurate filesModified from batch analysis
         var mergedStats = globalAuthorStats
-        for file in enrichedFiles {
-            for author in file.gitMetadata.topAuthors {
-                mergedStats[author, default: AuthorStats()].filesModified += 1
-            }
+        for (author, fileCount) in authorFileCounts {
+            mergedStats[author, default: AuthorStats()].filesModified = fileCount
         }
 
         return Result(
