@@ -195,6 +195,14 @@ final class SwiftParser: LanguageParser, @unchecked Sendable {
 
     /// Detects module name and build system.
     private func detectModule(for file: URL, pathComponents: [String]) -> (String, BuildSystem) {
+        // Binary framework detection: .xcframework or .framework in path
+        if let fwComp = pathComponents.first(where: { $0.hasSuffix(".xcframework") }) {
+            return (String(fwComp.dropLast(".xcframework".count)), .unknown)
+        }
+        if let fwComp = pathComponents.first(where: { $0.hasSuffix(".framework") }) {
+            return (String(fwComp.dropLast(".framework".count)), .unknown)
+        }
+
         // Fast path: Packages/ directory → SPM
         if let pkgIdx = pathComponents.firstIndex(of: "Packages"),
            pkgIdx + 1 < pathComponents.count {

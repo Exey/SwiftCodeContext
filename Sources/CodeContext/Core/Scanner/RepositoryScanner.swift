@@ -41,8 +41,15 @@ struct RepositoryScanner {
             let relativePath = fileURL.path.replacingOccurrences(of: rootURL.path + "/", with: "")
             let components = relativePath.components(separatedBy: "/")
 
-            // Check if any path component is in the exclude list
-            if components.contains(where: { excludeSet.contains($0) }) {
+            // Check if any path component is in the exclude list or is a non-code bundle
+            if components.contains(where: { comp in
+                excludeSet.contains(comp) ||
+                comp.hasSuffix(".xcassets") ||
+                comp.hasSuffix(".bundle") ||
+                comp.hasSuffix(".app") ||
+                comp.hasSuffix(".appex") ||
+                comp.hasSuffix(".xctestplan")
+            }) {
                 if let resourceValues = try? fileURL.resourceValues(forKeys: [.isDirectoryKey]),
                    resourceValues.isDirectory == true {
                     enumerator.skipDescendants()
