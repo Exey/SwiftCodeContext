@@ -35,6 +35,11 @@ final class ObjCParser: LanguageParser, @unchecked Sendable {
         // Module detection — same logic as SwiftParser
         var packageName = ""
         var buildSystem: BuildSystem = .unknown
+        let hasPackagesDir = pathComponents.firstIndex(of: "Packages") != nil
+        let hasSourcesDir = pathComponents.lastIndex(of: "Sources") != nil
+        if hasPackagesDir || hasSourcesDir {
+            print("   🔎 [ObjC] SPM path hit for \(file.lastPathComponent): Packages=\(hasPackagesDir) Sources=\(hasSourcesDir)")
+        }
         if let pkgIdx = pathComponents.firstIndex(of: "Packages"),
            pkgIdx + 1 < pathComponents.count {
             packageName = pathComponents[pkgIdx + 1]
@@ -54,23 +59,33 @@ final class ObjCParser: LanguageParser, @unchecked Sendable {
 
         // Fallback: ObjC umbrella header detection (FolderName/FolderName.h)
         if packageName.isEmpty {
+            print("   🔎 [ObjC] umbrella search for: \(file.lastPathComponent)")
             let fm = FileManager.default
             var dir = file.deletingLastPathComponent()
-            for _ in 0..<10 {
+            for i in 0..<10 {
                 let dirName = dir.lastPathComponent
-                guard dirName != "/" && !dirName.isEmpty else { break }
-                let dirPath = dir.path
-                if fm.fileExists(atPath: dirPath + "/.git") ||
-                   fm.fileExists(atPath: dirPath + "/Package.swift") ||
-                   (try? fm.contentsOfDirectory(atPath: dirPath))?.contains(where: { $0.hasSuffix(".xcodeproj") }) == true {
+                guard dirName != "/" && !dirName.isEmpty else {
+                    print("   🔎 [ObjC]   iter \(i): hit root (\(dirName)), stopping")
                     break
                 }
-                if fm.fileExists(atPath: dirPath + "/\(dirName).h") {
+                let dirPath = dir.path
+                let hasGit = fm.fileExists(atPath: dirPath + "/.git")
+                let hasPkgSwift = fm.fileExists(atPath: dirPath + "/Package.swift")
+                let hasXcodeproj = (try? fm.contentsOfDirectory(atPath: dirPath))?.contains(where: { $0.hasSuffix(".xcodeproj") }) == true
+                if hasGit || hasPkgSwift || hasXcodeproj {
+                    print("   🔎 [ObjC]   iter \(i): '\(dirName)' → STOP (git=\(hasGit) pkg=\(hasPkgSwift) xcodeproj=\(hasXcodeproj))")
+                    break
+                }
+                let headerPath = dirPath + "/\(dirName).h"
+                let headerExists = fm.fileExists(atPath: headerPath)
+                print("   🔎 [ObjC]   iter \(i): '\(dirName)' → \(dirName).h exists=\(headerExists)")
+                if headerExists {
                     packageName = dirName
                     break
                 }
                 dir = dir.deletingLastPathComponent()
             }
+            print("   🔎 [ObjC]   result: packageName='\(packageName)'")
         }
 
         var moduleName = ""

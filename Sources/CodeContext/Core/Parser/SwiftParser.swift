@@ -231,31 +231,40 @@ final class SwiftParser: LanguageParser, @unchecked Sendable {
 
     /// Detect ObjC-style packages by umbrella header (FolderName/FolderName.h).
     private func detectUmbrellaHeaderPackage(for file: URL) -> (String, BuildSystem) {
+        print("   🔎 [Swift] umbrella search for: \(file.lastPathComponent)")
         let fm = FileManager.default
         var dir = file.deletingLastPathComponent()
 
-        for _ in 0..<10 {
+        for i in 0..<10 {
             let dirName = dir.lastPathComponent
-            guard dirName != "/" && !dirName.isEmpty else { break }
+            guard dirName != "/" && !dirName.isEmpty else {
+                print("   🔎 [Swift]   iter \(i): hit root (\(dirName)), stopping")
+                break
+            }
 
             let cacheKey = dir.path
             Self.moduleCacheLock.lock()
             if let cached = Self.moduleCache[cacheKey] {
                 Self.moduleCacheLock.unlock()
+                print("   🔎 [Swift]   iter \(i): '\(dirName)' → CACHED: '\(cached.0)'")
                 return cached
             }
             Self.moduleCacheLock.unlock()
 
             // Stop at project root markers
             let dirPath = dir.path
-            if fm.fileExists(atPath: dirPath + "/.git") ||
-               fm.fileExists(atPath: dirPath + "/Package.swift") ||
-               (try? fm.contentsOfDirectory(atPath: dirPath))?.contains(where: { $0.hasSuffix(".xcodeproj") }) == true {
+            let hasGit = fm.fileExists(atPath: dirPath + "/.git")
+            let hasPkgSwift = fm.fileExists(atPath: dirPath + "/Package.swift")
+            let hasXcodeproj = (try? fm.contentsOfDirectory(atPath: dirPath))?.contains(where: { $0.hasSuffix(".xcodeproj") }) == true
+            if hasGit || hasPkgSwift || hasXcodeproj {
+                print("   🔎 [Swift]   iter \(i): '\(dirName)' → STOP (git=\(hasGit) pkg=\(hasPkgSwift) xcodeproj=\(hasXcodeproj))")
                 break
             }
 
             let umbrellaHeader = dirPath + "/\(dirName).h"
-            if fm.fileExists(atPath: umbrellaHeader) {
+            let headerExists = fm.fileExists(atPath: umbrellaHeader)
+            print("   🔎 [Swift]   iter \(i): '\(dirName)' → \(dirName).h exists=\(headerExists)")
+            if headerExists {
                 let result = (dirName, BuildSystem.unknown)
                 Self.moduleCacheLock.lock()
                 Self.moduleCache[cacheKey] = result
