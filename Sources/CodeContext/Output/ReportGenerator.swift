@@ -218,9 +218,18 @@ struct ReportGenerator {
         branchName: String,
         authorStats: [String: AuthorStats],
         projectName: String = "",
-        metadata: ProjectMetadata = ProjectMetadata()
+        metadata: ProjectMetadata = ProjectMetadata(),
+        monkeyPatchedLibs: [MonkeyPatchedLibs.DetectedLib] = []
     ) throws {
-        let hotspots = graph.getTopHotspots(limit: 15)
+        // Filter out monkey-patched library files
+        let mpLibPaths = monkeyPatchedLibs.map(\.path)
+        let isMonkeyPatched: (String) -> Bool = { filePath in
+            mpLibPaths.contains { filePath.contains("/\($0)/") }
+        }
+        let projectFiles = parsedFiles.filter { !isMonkeyPatched($0.filePath) }
+
+        // Hotspots: exclude monkey-patched libs
+        let hotspots = graph.getTopHotspots(limit: 20).filter { !isMonkeyPatched($0.path) }.prefix(15)
         let fileMap = Dictionary(uniqueKeysWithValues: parsedFiles.map { ($0.filePath, $0) })
         let dateFmt = DateFormatter()
         dateFmt.dateFormat = "yyyy-MM-dd"
@@ -228,8 +237,16 @@ struct ReportGenerator {
         print("   Generating HTML sections...")
 
         // ─── 1. Team ───
+        // Compute per-author module counts from file git metadata
+        var authorModuleCounts: [String: [String: Int]] = [:]
+        for file in projectFiles {
+            let pkg = file.packageName.isEmpty ? "App" : file.packageName
+            for author in file.gitMetadata.topAuthors {
+                authorModuleCounts[author, default: [:]][pkg, default: 0] += 1
+            }
+        }
+
         let topTeam = authorStats.sorted {
-            // Primary: total commits, secondary: files modified
             if $0.value.totalCommits != $1.value.totalCommits {
                 return $0.value.totalCommits > $1.value.totalCommits
             }
@@ -239,54 +256,89 @@ struct ReportGenerator {
             let first = info.firstCommitDate > 0 ? dateFmt.string(from: Date(timeIntervalSince1970: info.firstCommitDate)) : "—"
             let last = info.lastCommitDate > 0 ? dateFmt.string(from: Date(timeIntervalSince1970: info.lastCommitDate)) : "—"
             let name = info.displayName.isEmpty ? author : info.displayName
-            return "<tr><td>\(esc(name))</td><td>\(info.filesModified)</td><td>\(info.totalCommits)</td><td>\(first)</td><td>\(last)</td></tr>"
+            // Top-3 modules for this author
+            let modules = (authorModuleCounts[author] ?? [:])
+                .sorted { $0.value > $1.value }
+                .prefix(3)
+                .map { mod -> String in
+                    let anchor = mod.key.replacingOccurrences(of: " ", with: "-")
+                    return "<a href='#pkg-\(anchor)' class='tag tag-local pkg-link-inline' style='font-size:11px'>\(esc(mod.key))</a>"
+                }
+                .joined(separator: " ")
+            return "<tr><td>\(esc(name))</td><td>\(info.filesModified)</td><td>\(info.totalCommits)</td><td>\(first)</td><td>\(last)</td><td>\(modules)</td></tr>"
         }.joined(separator: "\n")
 
         // ─── 2. Imports ───
-        let allImports = Set(parsedFiles.flatMap(\.imports))
-        let localPackageNames = Set(parsedFiles.compactMap { $0.packageName.isEmpty ? nil : $0.packageName })
-        let localModuleNames = Set(parsedFiles.filter { !$0.packageName.isEmpty }.map(\.moduleName)).union(localPackageNames)
-        // ObjC file-level imports (#import "Foo.h") resolve to class names that match scanned filenames
-        let localFileNames = Set(parsedFiles.map(\.fileNameWithoutExtension))
+        let allImports = Set(projectFiles.flatMap(\.imports))
+        let localPackageNames = Set(projectFiles.compactMap { $0.packageName.isEmpty ? nil : $0.packageName })
+        let localModuleNames = Set(projectFiles.filter { !$0.packageName.isEmpty }.map(\.moduleName)).union(localPackageNames)
+        let localFileNames = Set(projectFiles.map(\.fileNameWithoutExtension))
+
+        // C/C++ standard headers and system includes to exclude from External Dependencies
+        let cStandardHeaders: Set<String> = [
+            "stdio", "stdlib", "string", "strings", "math", "time", "errno", "assert", "float",
+            "stdint", "stdbool", "stddef", "stdarg", "limits", "inttypes", "ctype",
+            "signal", "setjmp", "locale", "wchar", "wctype", "complex", "tgmath", "fenv",
+            // C++ standard library
+            "iostream", "fstream", "sstream", "ostream", "istream", "streambuf",
+            "string_view", "array", "vector", "list", "deque", "set", "map", "stack", "queue",
+            "unordered_map", "unordered_set", "bitset", "tuple", "variant", "optional", "any",
+            "memory", "new", "functional", "algorithm", "iterator", "numeric", "utility",
+            "atomic", "mutex", "condition_variable", "thread", "future", "chrono",
+            "initializer_list", "type_traits", "typeindex", "typeinfo", "exception",
+            "cassert", "cerrno", "cmath", "cstdio", "cstdlib", "cstring", "cstddef", "cstdint",
+            "cstdbool", "cinttypes", "cfloat", "climits", "csignal", "clocale",
+            // POSIX / Unix system headers
+            "unistd", "fcntl", "pthread", "poll", "dlfcn",
+            "sys", "net", "netdb", "netinet", "arpa", "ifaddrs",
+            "mach", "mach-o", "libkern", "dispatch", "objc",
+            // x86/ARM intrinsics
+            "emmintrin", "immintrin", "xmmintrin", "arm_neon", "intrin",
+            // Windows
+            "windows", "winsock2", "ws2tcpip", "mswsock", "d3d11", "direct", "vadefs",
+            // Junk from relative imports
+            "..", ".", "",
+        ]
+
         var classifiedImports: [ImportKind: Set<String>] = [.apple: [], .external: [], .local: []]
         var detectedPrivateFrameworks: Set<String> = []
         for imp in allImports {
             let baseName = imp.components(separatedBy: ".").first ?? imp
+            let lowerBase = baseName.lowercased()
+            // Skip C/C++ standard headers and junk
+            if cStandardHeaders.contains(baseName) || cStandardHeaders.contains(lowerBase) { continue }
+            // Skip short single-word imports that look like C headers (all lowercase, no uppercase)
+            if imp.count <= 3 && imp == imp.lowercased() { continue }
             if appleFrameworks.contains(imp) || appleFrameworks.contains(baseName) {
                 classifiedImports[.apple, default: []].insert(imp)
             } else if localModuleNames.contains(imp) || localPackageNames.contains(imp) {
                 classifiedImports[.local, default: []].insert(imp)
             } else if localFileNames.contains(imp) {
-                // ObjC header-level import matching a scanned file — skip from imports display
-                // (it's an internal file cross-reference, not a module dependency)
                 continue
             } else {
-                // Check if it's a known private framework
                 if privateFrameworks.contains(baseName) {
                     detectedPrivateFrameworks.insert(imp)
                 }
                 classifiedImports[.external, default: []].insert(imp)
             }
         }
-        // Collect build system per package for display
         var packageBuildSystem: [String: BuildSystem] = [:]
-        for file in parsedFiles where !file.packageName.isEmpty {
+        for file in projectFiles where !file.packageName.isEmpty {
             if packageBuildSystem[file.packageName] == nil || file.buildSystem != .unknown {
                 packageBuildSystem[file.packageName] = file.buildSystem
             }
         }
 
-        // Metal files per package (needed in importsHTML closure)
         let metalPackages = Set(metadata.metalFiles.compactMap { $0.packageName.isEmpty ? nil : $0.packageName })
 
         let importsHTML: String = {
             var sections: [String] = []
 
             // Compute package line/decl percentages for highlighting
-            let totalLinesAll = parsedFiles.reduce(0) { $0 + $1.lineCount }
+            let totalLinesAll = projectFiles.reduce(0) { $0 + $1.lineCount }
             var pkgLines: [String: Int] = [:]
             var pkgDecls: [String: Int] = [:]
-            for file in parsedFiles {
+            for file in projectFiles {
                 let key = file.packageName.isEmpty ? "App" : file.packageName
                 pkgLines[key, default: 0] += file.lineCount
                 pkgDecls[key, default: 0] += file.declarations.filter { $0.kind != .extension }.count
@@ -324,8 +376,18 @@ struct ReportGenerator {
 
             // 2. External Dependencies
             if let extNames = classifiedImports[.external], !extNames.isEmpty {
-                let tags = extNames.sorted().map { "<span class='tag tag-external'>\($0)</span>" }.joined(separator: " ")
-                sections.append("<div class='import-group'><h3>📦 External Dependencies <span class='count'>(\(extNames.count))</span></h3><div class='tag-cloud'>\(tags)</div></div>")
+                let cleaned = Set(extNames.map { $0.components(separatedBy: ":").first ?? $0 })
+                let tags = cleaned.sorted().map { "<span class='tag tag-external'>\(esc($0))</span>" }.joined(separator: " ")
+                sections.append("<div class='import-group'><h3>📦 External Dependencies <span class='count'>(\(cleaned.count))</span></h3><div class='tag-cloud'>\(tags)</div></div>")
+            }
+
+            // 2b. Monkey-Patched / Vendored Libraries
+            if !monkeyPatchedLibs.isEmpty {
+                let tags = monkeyPatchedLibs.map { lib -> String in
+                    let size = lib.fileCount
+                    return "<span class='tag tag-external' style='border-color:var(--orange)'>\(esc(lib.name)) <span style='font-size:10px;color:var(--text3)'>\(size) files</span></span>"
+                }.joined(separator: " ")
+                sections.append("<div class='import-group'><h3>🐒 Vendored C/C++ Libraries <span class='count'>(\(monkeyPatchedLibs.count))</span></h3><p class='private-warn' style='color:var(--text3)'>Detected embedded third-party C/C++/ObjC libraries (monkey-patched). Excluded from summary stats and Hot Zones.</p><div class='tag-cloud'>\(tags)</div></div>")
             }
 
             // 3. Apple Frameworks
@@ -346,7 +408,7 @@ struct ReportGenerator {
         // ─── 3. Packages ───
         let appTargetName = "App"
         var packageFiles: [String: [ParsedFile]] = [:]
-        for file in parsedFiles {
+        for file in projectFiles {
             let key = file.packageName.isEmpty ? appTargetName : file.packageName
             packageFiles[key, default: []].append(file)
         }
@@ -364,7 +426,10 @@ struct ReportGenerator {
                 print("   Package \(pkgIdx + 1)/\(packages.count)...")
             }
 
-            let sortedFiles = pkg.files.sorted { $0.lineCount > $1.lineCount }
+            let allSorted = pkg.files.sorted { $0.lineCount > $1.lineCount }
+            let hasDecl: (ParsedFile) -> Bool = { !$0.declarations.filter { $0.kind != .extension && !Declaration.invalidNames.contains($0.name) }.isEmpty }
+            let swiftFiles = allSorted.filter { $0.filePath.hasSuffix(".swift") && $0.lineCount >= 20 && hasDecl($0) }
+            let objcFiles = allSorted.filter { !$0.filePath.hasSuffix(".swift") && $0.lineCount >= 20 && hasDecl($0) }
             let isApp = pkg.name == appTargetName
             let icon = isApp ? "📱" : "📦"
             let bsTag: String = {
@@ -374,15 +439,31 @@ struct ReportGenerator {
                 return " <span class='bs-badge'>\(bs.rawValue)</span>"
             }()
 
-            let fileRows = sortedFiles.map { file -> String in
-                let decls = file.declarations.filter { $0.kind != .extension && !Declaration.invalidNames.contains($0.name) }
-                let exts = file.declarations.filter { $0.kind == .extension && !Declaration.invalidNames.contains($0.name) }
-                var parts: [String] = decls.map { "\(kindIcon($0.kind))&thinsp;\(esc($0.name))" }
-                parts += exts.map { "🔹&thinsp;\(esc($0.name))" }
-                let declStr = parts.isEmpty ? "—" : parts.joined(separator: "&ensp;")
-                let desc = file.description.isEmpty ? "" : "<div class='file-desc'>💡 \(esc(String(file.description.prefix(120))))</div>"
-                return "<tr><td><strong>\(esc(file.fileName))</strong>\(desc)</td><td class='mono'>\(file.lineCount)</td><td>\(decls.count)</td><td class='decl-tags'>\(declStr)</td></tr>"
-            }.joined(separator: "\n")
+            func makeFileRows(_ files: [ParsedFile]) -> String {
+                files.map { file -> String in
+                    let decls = file.declarations.filter { $0.kind != .extension && !Declaration.invalidNames.contains($0.name) }
+                    let exts = file.declarations.filter { $0.kind == .extension && !Declaration.invalidNames.contains($0.name) }
+                    var parts: [String] = decls.map { "\(kindIcon($0.kind))&thinsp;\(esc($0.name))" }
+                    parts += exts.map { "🔹&thinsp;\(esc($0.name))" }
+                    let declStr = parts.isEmpty ? "—" : parts.joined(separator: "&ensp;")
+                    let desc = file.description.isEmpty ? "" : "<div class='file-desc'>💡 \(esc(String(file.description.prefix(120))))</div>"
+                    // Show parent folder in light gray
+                    let pathComps = file.filePath.components(separatedBy: "/")
+                    let folderIdx = max(0, pathComps.count - 2)
+                    let folder = pathComps.count >= 2 ? pathComps[folderIdx] + "/" : ""
+                    let folderHtml = folder.isEmpty ? "" : "<span style='color:var(--text3);font-weight:400'>\(esc(folder))</span>"
+                    return "<tr><td>\(folderHtml)<strong>\(esc(file.fileName))</strong>\(desc)</td><td class='mono'>\(file.lineCount)</td><td>\(decls.count)</td><td class='decl-tags'>\(declStr)</td></tr>"
+                }.joined(separator: "\n")
+            }
+
+            let swiftRows = makeFileRows(swiftFiles)
+            let objcRows = makeFileRows(objcFiles)
+            let fileRows: String
+            if !objcFiles.isEmpty && !swiftFiles.isEmpty {
+                fileRows = swiftRows + "\n<tr><td colspan='4' style='background:var(--bg2);padding:4px 10px;font-size:11px;color:var(--text3);font-weight:600;text-transform:uppercase;letter-spacing:0.05em'>Objective-C</td></tr>\n" + objcRows
+            } else {
+                fileRows = swiftRows + objcRows
+            }
 
             // Declaration graph
             let graphId = "pkg-graph-\(graphCounter)"
@@ -404,7 +485,7 @@ struct ReportGenerator {
             packageSections += """
             <div class="package-section" id="pkg-\(pkgAnchor)">
                 <h3>\(icon) \(esc(pkg.name))\(bsTag)
-                    <span class="pkg-stats">\(sortedFiles.count) files · \(pkg.totalLines.formatted()) lines · \(pkg.realDeclarations.count) declarations</span>
+                    <span class="pkg-stats">\(allSorted.count) files · \(pkg.totalLines.formatted()) lines · \(pkg.realDeclarations.count) declarations</span>
                 </h3>
                 <p class="stats-detail">\(statsParts.joined(separator: " · "))</p>
                 \(showGraph ? "<div id='\(graphId)' class='pkg-graph-container'></div>" : "")
@@ -460,14 +541,17 @@ struct ReportGenerator {
             let fileName = URL(fileURLWithPath: item.path).lastPathComponent
             let pkg = file?.packageName.isEmpty == false ? file!.packageName : "App"
             let pkgAnchor = pkg.replacingOccurrences(of: " ", with: "-")
-            let desc = file?.description ?? ""
-            let descHtml = desc.isEmpty ? "" : "<span class='description'>💡 \(esc(String(desc.prefix(100))))</span>"
-            return "<li class='hotspot-item'><div><span>\(esc(fileName))</span> <a href='#pkg-\(pkgAnchor)' class='tag tag-local pkg-link-inline'>\(esc(pkg))</a>\(descHtml)</div><span class='hotspot-score'>\(String(format: "%.4f", item.score))</span></li>"
+            let lineCount = file?.lineCount ?? 0
+            let declCount = file?.declarations.filter { $0.kind != .extension && !Declaration.invalidNames.contains($0.name) }.count ?? 0
+            // Extract folder path (everything before the filename)
+            let pathComps = item.path.components(separatedBy: "/")
+            let folderPath = pathComps.count >= 2 ? pathComps.dropLast().suffix(3).joined(separator: "/") + "/" : ""
+            return "<tr><td><span style='color:var(--text3)'>\(esc(folderPath))</span><strong>\(esc(fileName))</strong></td><td class='mono'>\(String(format: "%.4f", item.score))</td><td class='mono'>\(lineCount)</td><td class='mono'>\(declCount)</td><td><a href='#pkg-\(pkgAnchor)' class='tag tag-local pkg-link-inline' style='font-size:11px'>\(esc(pkg))</a></td></tr>"
         }.joined(separator: "\n")
 
         // ─── 5. Summary ───
-        let totalLines = parsedFiles.reduce(0) { $0 + $1.lineCount }
-        let allDecls = parsedFiles.flatMap(\.declarations).filter { !Declaration.invalidNames.contains($0.name) }
+        let totalLines = projectFiles.reduce(0) { $0 + $1.lineCount }
+        let allDecls = projectFiles.flatMap(\.declarations).filter { !Declaration.invalidNames.contains($0.name) }
         let totalDecls = allDecls.filter { $0.kind != .extension }.count
         let totalExts = allDecls.filter { $0.kind == .extension }.count
         let totalStructs = allDecls.filter { $0.kind == .struct }.count
@@ -477,13 +561,13 @@ struct ReportGenerator {
         let totalActors = allDecls.filter { $0.kind == .actor }.count
 
         // TODO/FIXME
-        let totalTodos = parsedFiles.reduce(0) { $0 + $1.todoCount }
-        let totalFixmes = parsedFiles.reduce(0) { $0 + $1.fixmeCount }
+        let totalTodos = projectFiles.reduce(0) { $0 + $1.todoCount }
+        let totalFixmes = projectFiles.reduce(0) { $0 + $1.fixmeCount }
 
         // Module TODO/FIXME stats
         var moduleTodos: [String: Int] = [:]
         var moduleFixmes: [String: Int] = [:]
-        for file in parsedFiles {
+        for file in projectFiles {
             let key = file.packageName.isEmpty ? "App" : file.packageName
             moduleTodos[key, default: 0] += file.todoCount
             moduleFixmes[key, default: 0] += file.fixmeCount
@@ -495,8 +579,8 @@ struct ReportGenerator {
 
         // Package penetration: how many other packages import each package
         var pkgImportedBy: [String: Set<String>] = [:]
-        let localPkgSet = Set(parsedFiles.compactMap { $0.packageName.isEmpty ? nil : $0.packageName })
-        for file in parsedFiles {
+        let localPkgSet = Set(projectFiles.compactMap { $0.packageName.isEmpty ? nil : $0.packageName })
+        for file in projectFiles {
             let srcPkg = file.packageName.isEmpty ? "App" : file.packageName
             for imp in file.imports {
                 if localPkgSet.contains(imp) && imp != srcPkg {
@@ -506,8 +590,8 @@ struct ReportGenerator {
         }
         let topPenetration = pkgImportedBy.sorted { $0.value.count > $1.value.count }.prefix(20)
 
-        // Longest functions across all files
-        let allFunctions = parsedFiles.compactMap(\.longestFunction)
+        // Longest functions across all files (project only)
+        let allFunctions = projectFiles.compactMap(\.longestFunction)
         let topLongestFuncs = allFunctions.sorted { $0.lineCount > $1.lineCount }.prefix(20)
 
         print("   Writing HTML...")
@@ -600,11 +684,26 @@ struct ReportGenerator {
                     \(!metadata.deploymentTargets.isEmpty ? "<div class=\"summary-card\"><div class=\"num\" style=\"font-size:16px\">\(esc(metadata.deploymentTargets.joined(separator: ", ")))</div><div class=\"label\">Min Deployment</div></div>" : "")
                     \(!metadata.appVersion.isEmpty ? "<div class=\"summary-card\"><div class=\"num\" style=\"font-size:20px\">\(esc(metadata.appVersion))</div><div class=\"label\">App Version</div></div>" : "")
                     \(metadata.assets.totalSizeBytes > 0 ? "<div class=\"summary-card\"><div class=\"num\" style=\"font-size:18px\">\(metadata.assets.allFiles.count) <span style=\"font-size:14px;font-weight:400;color:var(--text3)\">(\(String(format: "%.1f", Double(metadata.assets.totalSizeBytes) / 1_048_576.0)) MB)</span></div><div class=\"label\">Assets</div></div>" : "")
-                    <div class="summary-card"><div class="num">\(parsedFiles.count)</div><div class="label">Swift Files</div></div>
+                    \({
+                        let swiftCount = projectFiles.filter { $0.filePath.hasSuffix(".swift") }.count
+                        let objcCount = projectFiles.count - swiftCount
+                        if objcCount > 0 {
+                            let swiftLines = projectFiles.filter { $0.filePath.hasSuffix(".swift") }.reduce(0) { $0 + $1.lineCount }
+                            let pct = totalLines > 0 ? Int(round(Double(swiftLines) / Double(totalLines) * 100)) : 0
+                            return """
+                            <div class="summary-card"><div class="num">\(swiftCount)</div><div class="label">Swift Files</div></div>
+                            <div class="summary-card"><div class="num">\(objcCount)</div><div class="label">ObjC Files</div></div>
+                            <div class="summary-card"><div class="num" style="font-size:20px">\(pct)%</div><div class="label">Swift Code</div></div>
+                            """
+                        } else {
+                            return "<div class=\"summary-card\"><div class=\"num\">\(swiftCount)</div><div class=\"label\">Swift Files</div></div>"
+                        }
+                    }())
                     <div class="summary-card"><div class="num">\(totalLines.formatted())</div><div class="label">Lines of Code</div></div>
                     <div class="summary-card"><div class="num">\(totalDecls)</div><div class="label">Declarations</div></div>
                     <div class="summary-card"><div class="num">\(totalExts)</div><div class="label">Extensions</div></div>
                     <div class="summary-card"><div class="num">\(packages.count)</div><div class="label">Packages</div></div>
+                    \(!monkeyPatchedLibs.isEmpty ? "<div class=\"summary-card\"><div class=\"num\">\(monkeyPatchedLibs.count)</div><div class=\"label\">🐒 Vendored Libs</div></div>" : "")
                     \(totalTodos + totalFixmes > 0 ? "<div class=\"summary-card\"><div class=\"num\">\(totalTodos + totalFixmes)</div><div class=\"label\">TODO/FIXME</div></div>" : "")
                     <div class="summary-card"><div class="num">\(totalStructs)</div><div class="label">🟢 Structs</div></div>
                     <div class="summary-card"><div class="num">\(totalClasses)</div><div class="label">🔵 Classes</div></div>
@@ -618,7 +717,7 @@ struct ReportGenerator {
             <div class="card">
                 <h2>👥 Team Contribution Map</h2>
                 <div class="table-wrap"><table class="team-table">
-                    <thead><tr><th>Developer</th><th>Files Modified</th><th>Commits</th><th>First Change</th><th>Last Change</th></tr></thead>
+                    <thead><tr><th>Developer</th><th>Files Modified</th><th>Commits</th><th>First Change</th><th>Last Change</th><th>Top-3 Modules</th></tr></thead>
                     <tbody>\(teamRows)</tbody>
                 </table></div>
             </div>
@@ -680,8 +779,11 @@ struct ReportGenerator {
             }() : "")
             <div class="card">
                 <h2>🔥 Hot Zones</h2>
-                <p class="subtitle">Files with highest <strong>PageRank</strong> score — the most connected and structurally impactful nodes in the dependency graph. High-scoring files are referenced by many other files and sit at critical junctions in the codebase architecture.</p>
-                <ul class="hotspot-list">\(hotspotRows)</ul>
+                <p class="subtitle">Files with the highest dependency score (PageRank). These are the most interconnected files in the codebase.</p>
+                <div class="table-wrap"><table class="file-table">
+                    <thead><tr><th>File</th><th>Score</th><th>Lines</th><th>Decl</th><th>Package</th></tr></thead>
+                    <tbody>\(hotspotRows)</tbody>
+                </table></div>
             </div>
             <div class="card">
                 <h2>📋 Module Insights</h2>
@@ -725,7 +827,7 @@ struct ReportGenerator {
             """ : "")
             <div class="card">
                 <h2>📦 Packages & Modules</h2>
-                <p class="subtitle">Graphs: type references between declarations. <span style="color:#007aff">●</span> class <span style="color:#34c759">●</span> struct <span style="color:#ff9500">●</span> enum <span style="color:#ff3b30">●</span> actor. Arrows from class/actor only.</p>
+                <p class="subtitle">Showing files with ≥ 20 lines and at least one declaration. Graphs: type references between declarations. <span style="color:#007aff">●</span> class <span style="color:#34c759">●</span> struct <span style="color:#ff9500">●</span> enum <span style="color:#ff3b30">●</span> actor. Arrows from class/actor only.</p>
                 \(packageSections)
             </div>
             <footer style="text-align:center; padding: 20px 0 10px; color: var(--text3); font-size: 12px;">

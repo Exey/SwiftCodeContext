@@ -47,6 +47,7 @@ enum AnalysisPipeline {
         let branchName: String
         let authorStats: [String: AuthorStats]
         let metadata: ProjectMetadata
+        let monkeyPatchedLibs: [MonkeyPatchedLibs.DetectedLib]
     }
 
     static func run(
@@ -146,9 +147,17 @@ enum AnalysisPipeline {
             mergedStats[author, default: AuthorStats()].filesModified = fileCount
         }
 
+        print("🐒 Detecting monkey-patched libraries...")
+        let monkeyLibs = MonkeyPatchedLibs.detect(rootPath: path, excludePaths: Set(config.excludePaths))
+        if !monkeyLibs.isEmpty {
+            let totalFiles = monkeyLibs.reduce(0) { $0 + $1.fileCount }
+            print("   Found \(monkeyLibs.count) vendored libs (\(totalFiles) files)")
+        }
+
         return Result(
             graph: graph, parsedFiles: parsedFiles, enrichedFiles: enrichedFiles,
-            branchName: branchName, authorStats: mergedStats, metadata: metadata
+            branchName: branchName, authorStats: mergedStats, metadata: metadata,
+            monkeyPatchedLibs: monkeyLibs
         )
     }
 

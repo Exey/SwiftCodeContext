@@ -81,7 +81,8 @@ struct AnalyzeCommand: AsyncParsableCommand {
             branchName: result.branchName,
             authorStats: result.authorStats,
             projectName: projectName,
-            metadata: result.metadata
+            metadata: result.metadata,
+            monkeyPatchedLibs: result.monkeyPatchedLibs
         )
 
         let reportURL = URL(fileURLWithPath: reportPath).standardizedFileURL
