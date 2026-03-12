@@ -1,6 +1,6 @@
 # 🔬 SwiftCodeContext
 
-**Native macOS CLI tool for Swift codebase intelligence** — find critical files, generate dependency graphs, learning paths, and AI-powered insights.
+**Native macOS CLI tool for Swift codebase intelligence** — find critical files, generate dependency graphs, learning paths.
 
 Built 100% in Swift using Apple-native technologies
 
@@ -145,13 +145,6 @@ codecontext evolution
 codecontext evolution --months 12 --interval 7
 ```
 
-### Ask AI Questions
-```bash
-# Requires AI config in .codecontext.json
-codecontext ask "Where is the authentication logic?"
-codecontext ask "What would break if I refactored UserService?"
-```
-
 ### Initialize Config
 ```bash
 codecontext init
@@ -180,13 +173,6 @@ Create `.codecontext.json` in your project root (or run `codecontext init`):
     }
 }
 ```
-
-### Supported AI Providers
-
-| Provider | `provider` | Model examples |
-|----------|-----------|----------------|
-| Anthropic Claude | `"anthropic"` | `claude-sonnet-4-20250514` |
-| Google Gemini | `"gemini"` | `gemini-2.5-flash` |
 
 ---
 
