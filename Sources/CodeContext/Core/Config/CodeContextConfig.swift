@@ -5,8 +5,24 @@ import Foundation
 
 struct CodeContextConfig: Codable {
     var excludePaths: [String] = [
-        ".git", ".build", ".swiftpm", "DerivedData", "Pods",
-        "Carthage", "node_modules", ".xcode", "build", ".idea"
+        // Version control & IDE
+        ".git", ".idea", ".xcode",
+        // Swift/Apple
+        ".build", ".swiftpm", "DerivedData", "Pods", "Carthage", "build",
+        // JavaScript/Node
+        "node_modules", ".next", ".nuxt", "dist", ".turbo",
+        // Python
+        "venv", ".venv", "env", ".env", "__pycache__", ".tox", "site-packages",
+        // Ruby
+        "vendor", ".bundle",
+        // Java/Kotlin/Android
+        ".gradle", ".kotlin", "target",
+        // Rust
+        "target",
+        // Go
+        "vendor",
+        // General build/cache
+        ".cache", ".tmp", "tmp", "out", "output"
     ]
     var maxFilesAnalyze: Int = 20000
     var gitCommitLimit: Int = 1000
